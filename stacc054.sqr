@@ -1,0 +1,4581 @@
+!********************************************************************************
+!California State University Stanislaus (CSUS)					!
+!Report Name: 	STACC054.sqr							!
+!Developer :  	Becky Atkins							!
+!Date: 		07/21/2020							!
+!Description:	SalesForce Interface files					!
+!********************************************************************************
+!
+!  Description: Creates feed files for SalesForce SIS Integration
+!		For UEE
+!********************************************************************************
+!
+!Prompt(s):	STRM and the FILE_PATH (path).
+!*************************************************************************************
+! Output:	salesForce_sontacts_<admit_term>.csv
+!		salesForce_testscores_<admit_term>.csv
+!		salesforce_transcripts_<admit_term>.csv
+!		salesforce_students.csv
+!		salesforce_students_intl.csv
+!		salesforce_contacts_intl_<admit_term>.csv
+!*************************************************************************************
+!	Table Referenced		Description			Usage
+!       ----------------		-----------			-----
+!	STA_RUN_CC054						Run Control
+!	STDNT_CAR_TERM						Select
+!	ACAD_PLAN							Select
+!	ACAD_PLAN_TBL						Select
+!	ACAD_SUBPLAN						Select
+!	ACAD_SUBPLN_TBL						Select
+!	NAMES_VW							Select
+!	ADDRESSES							Select
+!	EMAIL_ADDRESSES						Select
+!	PERSONAL_PHONE						Select
+!	ACAD_DEGR							Select
+!	STDNT_GRPS_HIST						Select
+!	PSXLATITEM							Select
+!	ADM_APPL_DATA 						Select
+!   ADM_APPL_PROG						Select
+!   PERS_DATA_SA_VW						Select
+!*************************************************************************************
+! Modifications:
+! -------------
+! Date		Version		Developer		Comment
+! -------	-------		-------------		---------------
+! 03/11/2020	1.0		BAtkins			Original
+! 06/29/2020	2.0		BAtkins			Modify with revised criteria
+! 08/12/2020			BAtkins			Correct transcripts criteria
+! 08/19/2020			BAtkins			Add term to relevant file names
+! 09/17/2020			BAtkins			Add Internationals files
+! 11/13/2020			BAtkins			Correct process students eff dating
+! 05/18/2021			KBrown			New AcadPlan Codes. Add Received /  Unofficial/Official Status to Output
+! 02/09/2023			KBrown			Add the Acad Plan code "LEAD-BS-UD" to the list of codes to be included in the output file
+! 03/29/2024      KBrown      Added "LEAD-BS-UD" where necessary
+! 04/12/2024      GMarlow     Modified the Process-Applicants procedure to deliver all students
+!*************************************************************************************
+
+#include 'setenv.sqc'    !Set environment
+!#Include 'setup02.sqc'   !Printer and page-size initialization
+!
+!***********************************************************************
+! BEGIN SETUP SECTION                                                  *
+!***********************************************************************
+BEGIN-SETUP
+#Include 'ptset02.sqc'   !Printer and page-size initialization - landscape (180/54)
+!   #Include 'ptset01.sqc'  !Printer and page-size initialization - portrait (125/79)
+#Include 'setupdb.sqc'
+    
+END-SETUP
+!***********************************************************************
+BEGIN-PROGRAM 
+
+   do Stdapi-Init
+   do Init-DateTime
+   Do Get-Time-Date
+   do Init-Number
+   
+   	display '========================================================================'
+   	date-time () 'DD-MON-YYYY HH:MI PM' &timebegan
+   	display 'PROCESS BEGIN AT: ' NOLINE
+	display &timebegan
+	
+        Let $ReportID     = 'STACC054'
+        Let $ReportTitle = 'Extracting students for SalesForce files '||datetostr(datenow(), 'MM/DD/YYYY')
+        
+       ! Show $ReportID
+       ! show $ReportTitle
+   
+        Let $Delimiter = ','
+        
+        do Get-Values
+        do Get-Term-Descr
+       
+       SHOW '********   In Get-Run-Parms subroutine ******* '
+       	SHOW 'Oprid             : ' $prcs_oprid
+       	SHOW 'Run Control Id    : ' $prcs_run_cntl_id
+       	Show 'Current Term: ' noline
+       	show $CTerm
+       	Show 'Winter/Summer Term: ' noline
+       	Show $WSTerm
+       	SHOW '********************************************** '
+       	
+     ! GROUP 1 - Applicants
+        Let $FileName1 = $RC_FilePath ||'salesforce_contacts_'||$STRM||'.csv' 
+   	Show 'FileName ' $FileName1
+   	
+   	Let $FileName2 = $RC_FilePath ||'salesforce_testscores_'||$STRM||'.csv' 
+  	Show 'File Name ' $FileName2
+  	
+  	Let $FileName3 = $RC_FilePath ||'salesforce_transcripts_'||$STRM||'.csv' 
+  	Show 'File Name ' $FileName3
+  	
+     ! GROUP 2 - Students
+  	Let $FileName4 = $RC_FilePath ||'salesforce_students.csv' 
+  	Show 'File Name ' $FileName4
+   	   
+       Open $FileName1 as 1 For-Writing Record=1000:Vary Status=#FileStatus
+       If #FileStatus != 0
+          Show 'Error Opening File: ' $FileName1
+         STOP
+         else
+            
+	 Do Write-Contacts-Header	
+	 Do Process-Main
+	 Do Process-Applicants	 
+      	End-if          
+       close 1
+
+       Open $FileName2 as 2 For-Writing Record=1000:Vary Status=#FileStatus
+  	If #FileStatus != 0
+           Show 'Error Opening File: ' $FileName2
+           STOP
+  	Else
+          Do Write-TestScores-Header        	
+  	  Do Get-TestScores 
+        End-if	
+     
+      close 2
+      
+      Open $FileName3 as 3 For-Writing Record=1000:Vary Status=#FileStatus
+      	         If #FileStatus != 0
+      	           Show 'Error Opening File: ' $FileName3
+      	           STOP
+      	         Else
+      	          Do Write-Schools-Header        	
+      	          Do Get-Transcripts !Schools
+                 End-if	
+      close 3
+      
+      Open $FileName4 as 4 For-Writing Record=1000:Vary Status=#FileStatus
+         If #FileStatus != 0
+                Show 'Error Opening File: ' $FileName4
+               STOP
+               else
+                  
+      	 Do Write-Students-Header	
+      	 Do Process-Students	 
+         End-if          
+         close 4
+! GROUP 3 - Internationals
+  	Let $FileName5 = $RC_FilePath ||'salesforce_students_intl.csv' 
+  	Show 'File Name ' $FileName5
+  	
+  	 Let $FileName6 = $RC_FilePath ||'salesforce_contacts_intl_'||$STRM||'.csv' 
+		 Show 'File Name ' $FileName6
+		 
+	Let $FileName7 = $RC_FilePath ||'salesforce_testscores_intl_'||$STRM||'.csv' 
+		 	 Show 'File Name ' $FileName7
+		 	 
+		 	 
+	Let $FileName8 = $RC_FilePath ||'salesforce_transcripts_intl_'||$STRM||'.csv' 
+	 	 Show 'File Name ' $FileName8
+  	
+  	
+  	Open $FileName5 as 5 For-Writing Record=1000:Vary Status=#FileStatus
+	         If #FileStatus != 0
+	                Show 'Error Opening File: ' $FileName5
+	               STOP
+	               else
+	                  
+	      	 Do Write-International-Students-Header	
+	      	 Do Process-International-Students	 
+	         End-if          
+         close 5
+         
+	   	
+	 Open $FileName6 as 6 For-Writing Record=1000:Vary Status=#FileStatus
+	 	 If #FileStatus != 0
+	 	        Show 'Error Opening File: ' $FileName6
+	 	        STOP
+	 	        else
+	 	                  
+	 	Do Write-International-Contacts-Header	
+	 	Do Process-International-Applicants	 
+	 	End-if          
+         close 6
+         
+        
+	 	   	
+	 	 
+	Open $FileName7 as 7 For-Writing Record=1000:Vary Status=#FileStatus
+	 	 If #FileStatus != 0
+	 	 	Show 'Error Opening File: ' $FileName7
+	 	 	STOP
+	 	 	else
+	 	 	                  
+	 	Do Write-IntlTestScores-Header        	
+  	  	Do Process-Intl-TestScores 	 
+	 	 End-if          
+         close 7
+
+	 	   	
+	 Open $FileName8 as 8 For-Writing Record=1000:Vary Status=#FileStatus
+	 	 If #FileStatus != 0
+	 	 	Show 'Error Opening File: ' $FileName8
+	 	 	STOP
+	 	 	else
+	 	 	                  
+	 	 Do Write-IntlSchools-Header        	
+      	         Do Get-Intl-Transcripts
+	 	 End-if          
+         close 8
+
+   do Stdapi-Term
+   Do Get-Time-Date
+   Show 'End Report STACC054: ' $Reporttitle  &TIME_DATE
+   Show 'Total ' noline
+   Show #TotalCt
+      
+END-PROGRAM
+!
+!********************************************************************************
+Begin-Procedure Get-Values
+!********************************************************************************
+Let $AdmitTerm = ''
+
+BEGIN-SELECT
+RC.OPRID
+RC.RUN_CNTL_ID		
+RC.STRM
+RC.FILEPATH1
+substr(RC.STRM,4,4)   &WSTerm
+
+   Let $STRM		= &RC.STRM
+   Let $AdmitTerm	= &RC.STRM
+   Let $RC_FilePath  	= &RC.FILEPATH1	
+   
+   
+FROM sysadm.PS_STA_RUN_CC054 RC
+WHERE RC.OPRID       = $prcs_oprid
+AND RC.RUN_CNTL_ID   = $prcs_run_cntl_id
+
+END-SELECT
+
+End-Procedure
+
+!**********************************************************************
+!**********************************************************************
+! GROUP 1 - Applicants
+!**********************************************************************
+Begin-Procedure Process-Main
+
+Move 0 to #ApplCt
+Move 0 to $TotalCt
+Let $CumGPA = '0'
+Let $City = ''
+Let $State = ''
+Let $Level = ''
+Let $Labels = ''
+Let $SchoolYear = ''
+Let $Majors = ''
+Let $Majors2 = ''
+
+End-Procedure
+
+
+!******************************************************************************
+Begin-Procedure Process-Applicants
+Display 'Processing Applicants'
+Move 0 to #ApplCt
+
+Let $ExtOrgID = ''
+Let $Level = ''
+Let $AcademicProgram = ''
+Let $Emplid = ''
+Let $ExpGradTrm = ''
+Let $LastUPdate = ''
+
+! UEE Current Term Applicants 
+BEGIN-SELECT DISTINCT 
+PG.EMPLID				
+EM.EMAIL_ADDR
+fr.FERPA
+B.FIRST_NAME
+B.LAST_NAME
+B.MIDDLE_NAME
+replace(M.ADDRESS1,',',' ')  &ADDRESS1
+replace(M.ADDRESS2,',',' ')  &ADDRESS2
+replace(M.CITY,',',' ')      &CITY
+replace(M.STATE,',',' ')     &STATE
+replace(M.POSTAL,',',' ')    &POSTAL
+to_char(B.BIRTHDATE,'MM/DD/YYYY') &BIRTHDATE
+EG.ETHNIC_GRP_CD
+HM.EMAIL_ADDR
+decode(B.SEX, 'U', '', B.SEX)  &GENDER
+PH.PHONE
+RO.RESIDENCY	&RESIDENCY
+pg.acad_career
+PG.ACAD_PROG
+!PG.PROG_STATUS
+PG.PROG_ACTION
+PG.PROG_REASON
+PG.ADM_APPL_NBR
+pl.acad_plan		&ACAD_PLAN
+PG.ADMIT_TERM
+PG.EXP_GRAD_TERM
+to_char(PG.ACTION_DT,'MM/DD/YYYY') &ActionDt
+TO_CHAR(PG.EFFDT,'MM/DD/YYYY') &Effdt 
+to_char(PG.SCC_ROW_UPD_DTTM,'MM/DD/YYYY') &LastUPdate
+
+
+	Let $Emplid 	= &PG.EMPLID
+	Let $StanMail	= &EM.EMAIL_ADDR
+	Let $Ferpa	= &FR.FERPA
+	Let $FirstName	= &B.FIRST_NAME
+	Let $Middle	= &B.MIDDLE_NAME
+	Let $LastName	= &B.LAST_NAME
+	Let $DOB	= &BIRTHDATE 
+	Let $Gender	= &GENDER
+	Let $Address1	= &ADDRESS1
+	Let $Address2	= &ADDRESS2
+	Let $City	= &CITY
+	Let $State	= &STATE
+	Let $Zip	= &POSTAL
+	Let $ActionDt	= &ActionDt
+	Let $Cell	= &PH.PHONE
+	Let $Career	= &PG.ACAD_CAREER
+	Let $Status	= &PG.PROG_ACTION
+	Let $ActnRsn	= &PG.PROG_REASON
+	Let $AcadProg  = &PG.ACAD_PROG
+
+	
+	Let $ExpGradTrm = &PG.EXP_GRAD_TERM
+	Let $HomeEmail	= &HM.EMAIL_ADDR
+	Let $Ethnicity	= &EG.ETHNIC_GRP_CD
+	Let $AdmApplNbr	= &PG.ADM_APPL_NBR
+	Let $Effdt	= &Effdt
+	Let $Plan	= &ACAD_PLAN
+	
+	Let $LastUPdate = &LastUPdate
+	If $LastUPdate = ''
+	Let $LastUpDt	= &Effdt
+	Else
+	Let $LastUpDt = &LastUPdate
+	End-if
+	
+	Do Get-Term-Descr
+	Let $AdmitTermDescr = $TermDescr||' '||$TermYear
+	Let $Residency = &RESIDENCY
+	
+	Do Get-Citizenship
+	Do Get-AdmitDate
+	Do Get-AppDate
+	Do Get-AdmAppData
+	Do Get-AdmSubPlan
+	
+	If $SubPlan = ''
+	Do Get-SubPlan
+	End-if
+		
+	If $ExpGradTrm = ''
+	   Do Check-AcadProg
+	   Let $ExpGradTrm = $ExpGradTerm
+	End-if
+  
+	Do Write-Contacts
+
+FROM PS_ADM_APPL_PROG PG 
+JOIN PS_ADM_APPL_PLAN PL ON PL.EMPLID = PG.EMPLID
+                        AND PL.ACAD_CAREER = PG.ACAD_CAREER
+                        AND PL.STDNT_CAR_NBR = PG.STDNT_CAR_NBR
+                        AND PL.ADM_APPL_NBR = PG.ADM_APPL_NBR
+                        AND PL.APPL_PROG_NBR = PG.APPL_PROG_NBR
+                        AND PL.ACAD_PLAN IN ('CJ---BA-PB',
+											'HSCI-BS-PB',
+											'NURO-BS-PB',
+											'NURS-BS-PB',
+											'CJ---BA-UD',
+											'HSCI-BS-UD',
+											'NURO-BS-UD',
+											'SSCI-BA-UD',
+											'CHDV-MA-PD',
+											'SW---MW-PD',
+											'BUS--MB-PD',
+											'BUSO-MB-PD',
+											'SW---MW-PM',
+											'GNPM-CT-PO',
+                      'LEAD-BS-UD') !02/10/2023 KBrown, Added LEAD-BS-UD
+                        AND PL.EFFDT = (SELECT MAX(PL2.EFFDT) FROM PS_ADM_APPL_PLAN PL2
+                                       WHERE PL2.EMPLID = PL.EMPLID
+                                       AND PL2.ACAD_CAREER = PL.ACAD_CAREER
+                                       AND PL2.STDNT_CAR_NBR = PL.STDNT_CAR_NBR
+                                       AND PL2.ADM_APPL_NBR = PL.ADM_APPL_NBR
+                                       AND PL2.APPL_PROG_NBR = PL.APPL_PROG_NBR
+                                       AND PL2.EFFDT <= SYSDATE)
+                        AND PL.EFFSEQ = (SELECT MAX(PL3.EFFSEQ) FROM PS_ADM_APPL_PLAN PL3
+                                       WHERE PL3.EMPLID = PL.EMPLID
+                                       AND PL3.ACAD_CAREER = PL.ACAD_CAREER
+                                       AND PL3.STDNT_CAR_NBR = PL.STDNT_CAR_NBR
+                                       AND PL3.ADM_APPL_NBR = PL.ADM_APPL_NBR
+                                       AND PL3.APPL_PROG_NBR = PL.APPL_PROG_NBR
+                                       AND PL3.EFFDT = PL.EFFDT)    
+LEFT OUTER JOIN PS_PERSON_SA FR ON FR.EMPLID = PG.EMPLID
+JOIN PS_PERS_DATA_SA_VW B ON PG.EMPLID = B.EMPLID
+JOIN PS_EMAIL_ADDRESSES EM ON PG.EMPLID = EM.EMPLID
+  AND EM.E_ADDR_TYPE = 'STAN'
+LEFT OUTER JOIN PS_EMAIL_ADDRESSES HM ON PG.EMPLID = HM.EMPLID
+AND HM.E_ADDR_TYPE = 'HOME'
+LEFT OUTER JOIN PS_ADDRESSES M ON  M.EMPLID = PG.EMPLID
+  AND M.ADDRESS_TYPE = 'MAIL'
+  and m.eff_status = 'A'
+  AND M.EFFDT = (SELECT max(M1.EFFDT) FROM PS_ADDRESSES M1
+      WHERE M1.EMPLID = M.EMPLID
+      AND M1.ADDRESS_TYPE = M.ADDRESS_TYPE
+      AND M1.EFFDT <= sysdate)
+LEFT OUTER JOIN PS_PERSONAL_PHONE PH ON PH.EMPLID = PG.EMPLID
+                AND PH.PHONE_TYPE = 'CELL'
+LEFT OUTER JOIN PS_CSU_ETHNIC_HST EG ON EG.EMPLID = PG.EMPLID
+                 AND EG.PRIMARY_INDICATOR = 'Y'
+                 AND EG.EFFDT = (SELECT MAX(A1.EFFDT)
+                              FROM sysadm.PS_CSU_ETHNIC_HST A1
+                              WHERE EG.EMPLID = A1.EMPLID
+                              AND A1.PRIMARY_INDICATOR = EG.PRIMARY_INDICATOR
+                              AND A1.EFFDT <= SYSDATE)                 
+LEFT OUTER JOIN PS_RESIDENCY_OFF RO ON RO.EMPLID = PG.EMPLID
+                        and ro.residency_dt = (select max(r1.residency_dt) from ps_residency_off r1
+                        where r1.emplid = ro.emplid
+                        and r1.acad_career = ro.acad_career
+                        and r1.institution = 'STCMP'
+                        and r1.residency_dt <= sysdate)
+WHERE PG.ADMIT_TERM = $AdmitTerm 
+AND PG.EFFDT = (SELECT MAX(D_ED.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_ED
+                   WHERE PG.EMPLID = D_ED.EMPLID
+                     AND PG.ACAD_CAREER = D_ED.ACAD_CAREER
+                     AND PG.STDNT_CAR_NBR = D_ED.STDNT_CAR_NBR
+                     AND PG.ADM_APPL_NBR = D_ED.ADM_APPL_NBR
+                     AND PG.APPL_PROG_NBR = D_ED.APPL_PROG_NBR
+                     AND D_ED.EFFDT <= SYSDATE)
+AND PG.EFFSEQ = (SELECT MAX(D_ES.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_ES
+                    WHERE PG.EMPLID = D_ES.EMPLID
+                      AND PG.ACAD_CAREER = D_ES.ACAD_CAREER
+                      AND PG.STDNT_CAR_NBR = D_ES.STDNT_CAR_NBR
+                      AND PG.ADM_APPL_NBR = D_ES.ADM_APPL_NBR
+                      AND PG.APPL_PROG_NBR = D_ES.APPL_PROG_NBR
+                      AND PG.EFFDT = D_ES.EFFDT)
+                    
+
+union
+! transfers
+SELECT distinct
+PGT.EMPLID,
+EMT.EMAIL_ADDR,
+frT.FERPA,
+BT.FIRST_NAME,
+BT.LAST_NAME,
+BT.MIDDLE_NAME,
+replace(MT.ADDRESS1,',',' '),
+replace(MT.ADDRESS2,',',' '),
+replace(MT.CITY,',',' '),
+replace(MT.STATE,',',' '),
+replace(MT.POSTAL,',',' '),
+to_char(BT.BIRTHDATE,'MM/DD/YYYY'),
+EGT.ETHNIC_GRP_CD,
+hmT.email_addr,
+decode(BT.SEX, 'U', '', BT.SEX),
+PHT.PHONE,
+ROT.RESIDENCY,
+PGT.ACAD_CAREER,
+PGT.ACAD_PROG,
+!PGT.PROG_STATUS,
+PGT.PROG_ACTION,
+PGT.PROG_REASON,
+NULL,	!--PG.ADM_APPL_NBR,
+PGT.ACAD_PLAN,
+PGT.ADMIT_TERM,
+PGT.EXP_GRAD_TERM,
+NULL,
+TO_CHAR(PGT.EFFDT,'MM/DD/YYYY'), 
+NULL
+
+FROM
+(
+WITH vTerm AS
+ (SELECT *
+    FROM PS_TERM_TBL
+   WHERE INSTITUTION = 'STCMP'
+     AND ACAD_CAREER = 'UGRD'
+   AND STRM = $AdmitTerm),
+vAcadPlan AS
+ (SELECT PLN.EMPLID,
+         PLN.ACAD_CAREER,
+         PLN.STDNT_CAR_NBR,
+         PLN.EFFDT,
+         PLN.EFFSEQ,
+         PLN.ACAD_PLAN,
+         PLN.PLAN_SEQUENCE,
+         CASE WHEN PLN.ACAD_PLAN IN ('CJ---BA-PB',
+                                    'HSCI-BS-PB',
+                                    'NURO-BS-PB',
+                                    'NURS-BS-PB',
+                                    'CJ---BA-UD',
+                                    'HSCI-BS-UD',
+                                    'NURO-BS-UD',
+                                    'SSCI-BA-UD',
+                                    'CHDV-MA-PD',
+                                    'SW---MW-PD',
+                                    'BUS--MB-PD',
+                                    'BUSO-MB-PD',
+                                    'SW---MW-PM',
+                                    'GNPM-CT-PO',
+                                    'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+                                  THEN
+            'Y'
+           ELSE
+            'N'
+         END IsSpecialPlan
+    FROM PS_ACAD_PLAN PLN
+   WHERE PLN.ACAD_CAREER != 'EXED'
+     AND PLN.EFFSEQ = (SELECT MAX(EFFSEQ)
+                         FROM PS_ACAD_PLAN
+                        WHERE EMPLID = PLN.EMPLID
+                          AND ACAD_CAREER = PLN.ACAD_CAREER
+                          AND STDNT_CAR_NBR = PLN.STDNT_CAR_NBR
+                          AND EFFDT = PLN.EFFDT)),
+vAcadProg AS
+ (SELECT PRG.EMPLID,
+         PRG.ACAD_CAREER,
+         PRG.STDNT_CAR_NBR,
+         PRG.ACAD_PROG,
+         PRG.EFFDT,
+         PRG.EFFSEQ,
+         PRG.ADMIT_TERM,
+         prg.adm_appl_nbr,
+         prg.prog_status,
+         prg.prog_action,
+         prg.prog_reason,
+         prg.exp_grad_term
+    FROM PS_ACAD_PROG PRG
+   WHERE PRG.EFFSEQ = (SELECT MAX(EFFSEQ)
+                         FROM PS_ACAD_PROG
+                        WHERE EMPLID = PRG.EMPLID
+                          AND ACAD_CAREER = PRG.ACAD_CAREER
+                          AND STDNT_CAR_NBR = PRG.STDNT_CAR_NBR
+                          AND EFFDT = PRG.EFFDT))
+SELECT TRM.STRM,
+       CPLN.EMPLID,
+       CPLN.ACAD_CAREER,
+       CPLN.STDNT_CAR_NBR,
+       CPLN.EFFDT,
+       CPRG.ADMIT_TERM,
+       CPRG.ACAD_PROG,
+       CPRG.PROG_STATUS,
+       CPRG.PROG_ACTION,
+       CPRG.PROG_REASON,
+       CPRG.EXP_GRAD_TERM,
+       CPLN.ACAD_PLAN,
+       PPLN.EFFDT         PREVIOUS_PLAN_EFFDT,
+       PPLN.ACAD_PLAN     PREVIOUS_PLAN
+  FROM vTerm TRM
+  JOIN vAcadPlan CPLN ON CPLN.IsSpecialPlan = 'Y'
+                     AND CPLN.EFFDT =
+                         (SELECT MAX(EFFDT)
+                            FROM vAcadPlan
+                           WHERE EMPLID = CPLN.EMPLID
+                             AND ACAD_CAREER = CPLN.ACAD_CAREER
+                             AND STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                             AND EFFDT BETWEEN TRM.TERM_BEGIN_DT AND
+                                 TRM.TERM_END_DT)
+  JOIN vAcadPlan PPLN ON PPLN.EMPLID = CPLN.EMPLID
+                     AND PPLN.ACAD_CAREER = CPLN.ACAD_CAREER
+                     AND PPLN.STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                     AND PPLN.IsSpecialPlan = 'N'
+                     AND PPLN.EFFDT =
+                         (SELECT MAX(EFFDT)
+                            FROM vAcadPlan
+                           WHERE EMPLID = PPLN.EMPLID
+                             AND ACAD_CAREER = PPLN.ACAD_CAREER
+                             AND STDNT_CAR_NBR = PPLN.STDNT_CAR_NBR
+                             AND EFFDT < TRM.TERM_BEGIN_DT)
+  JOIN vAcadProg CPRG ON CPRG.EMPLID = CPLN.EMPLID
+                     AND CPRG.ACAD_CAREER = CPLN.ACAD_CAREER
+                     AND CPRG.STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                     AND CPRG.EFFDT = CPLN.EFFDT
+                     AND CPRG.EFFSEQ = CPLN.EFFSEQ
+                     AND CPRG.ADMIT_TERM < TRM.STRM
+  JOIN PS_STDNT_CAR_TERM SCT ON SCT.EMPLID = CPLN.EMPLID
+                            AND SCT.STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                            AND SCT.ACAD_CAREER = CPLN.ACAD_CAREER
+                            AND SCT.STRM = TRM.STRM
+ ORDER BY 1, 2) PGT
+ JOIN PS_PERS_DATA_SA_VW BT ON PGT.EMPLID = BT.EMPLID
+ JOIN PS_EMAIL_ADDRESSES EMT ON PGT.EMPLID = EMT.EMPLID
+  AND EMT.E_ADDR_TYPE = 'STAN'
+LEFT OUTER JOIN PS_PERSON_SA FRT ON FRT.EMPLID = PGT.EMPLID
+LEFT OUTER JOIN PS_EMAIL_ADDRESSES HMT ON PGT.EMPLID = HMT.EMPLID
+AND HMT.E_ADDR_TYPE = 'HOME'
+LEFT OUTER JOIN PS_ADDRESSES MT ON  MT.EMPLID = PGT.EMPLID
+  AND MT.ADDRESS_TYPE = 'MAIL'
+  and mT.eff_status = 'A'
+  AND MT.EFFDT = (SELECT max(M1.EFFDT) FROM PS_ADDRESSES M1
+      WHERE M1.EMPLID = MT.EMPLID
+      AND M1.ADDRESS_TYPE = MT.ADDRESS_TYPE
+      AND M1.EFFDT <= sysdate)
+LEFT OUTER JOIN PS_PERSONAL_PHONE PHT ON PHT.EMPLID = PGT.EMPLID
+                AND PHT.PHONE_TYPE = 'CELL'
+LEFT OUTER JOIN PS_CSU_ETHNIC_HST EGT ON EGT.EMPLID = PGT.EMPLID
+                 AND EGT.PRIMARY_INDICATOR = 'Y'
+                 AND EGT.EFFDT = (SELECT MAX(A1.EFFDT)
+                              FROM sysadm.PS_CSU_ETHNIC_HST A1
+                              WHERE EGT.EMPLID = A1.EMPLID
+                              AND A1.PRIMARY_INDICATOR = EGT.PRIMARY_INDICATOR
+                              AND A1.EFFDT <= SYSDATE)                 
+LEFT OUTER JOIN PS_RESIDENCY_OFF ROT ON ROT.EMPLID = PGT.EMPLID
+                        and roT.residency_dt = (select max(r1.residency_dt) from ps_residency_off r1
+                        where r1.emplid = roT.emplid
+                        and r1.acad_career = roT.acad_career
+                        and r1.institution = 'STCMP'
+                        and r1.residency_dt <= sysdate) 
+where not exists (select 1 from ps_adm_appl_prog app
+               where app.emplid = pgt.emplid
+               and app.admit_term = $AdmitTerm)
+                        
+End-Select
+
+	Display 'Applicants Ct: ' noline
+	Display #ApplCt
+	Display '--------------------'
+
+End-Procedure !Process-Applicants
+
+!-----------------------------------------------------
+Begin-Procedure Get-Citizenship
+Let $Citizenship = ''
+
+Begin-select distinct
+cz.emplid
+cz.country
+replace(czt.descr,',',' ') &czt.descr
+	Let $Citizenship = &czt.descr
+
+from ps_citizenship cz,
+ps_country_tbl czt
+where cz.country = czt.country
+and cz.emplid = $Emplid
+End-Select
+End-Procedure
+
+!-------------------------------------------------------
+Begin-Procedure Check-AcadProg
+Let $ExpGradTerm = ''
+
+Begin-select distinct
+EGT.EXP_GRAD_TERM
+
+	Let $ExpGradTerm = &EGT.EXP_GRAD_TERM
+	
+FROM PS_ACAD_PROG EGT
+WHERE EGT.EMPLID = $Emplid
+AND EGT.ADMIT_TERM = $AdmitTerm
+AND EGT.ACAD_PROG = $AcadProg
+and egt.ADM_APPL_NBR = $AdmApplNbr
+AND egt.exp_grad_term <> ' '
+End-Select
+
+End-Procedure
+
+!-------------------------------------------------------
+
+Begin-Procedure Get-AdmitDate
+Let $AdmitDt = ''
+
+Begin-Select
+to_char(ad2.action_dt,'MM/DD/YYYY')  &AdmDate
+
+	Let $AdmitDt = &AdmDate
+
+from ps_adm_appl_prog ad2
+where ad2.emplid = $Emplid
+and ad2.admit_term = $AdmitTerm
+and ad2.acad_prog = $AcadProg
+and ad2.prog_action = 'ADMT'
+End-Select
+
+If $AdmitDt = ''
+Begin-Select
+to_char(ad2.action_dt,'MM/DD/YYYY')  &AdmDate2
+
+	Let $AdmitDt = &AdmDate2
+	
+from ps_adm_appl_prog ad2
+where ad2.emplid = $Emplid
+and ad2.admit_term = $AdmitTerm
+and ad2.acad_prog = $AcadProg
+and ad2.prog_action = 'PRGC'
+End-Select
+End-if
+
+End-Procedure
+
+!---------------------------------------------------
+Begin-Procedure Get-AppDate
+Let $ApplDt = ''
+
+Begin-Select
+to_char(app3.action_dt,'MM/DD/YYYY')	&AppDateADM3
+	
+	Let $ApplDt = &AppDateADM3
+
+from ps_adm_appl_prog app3
+where app3.emplid = $Emplid
+and app3.admit_term = $AdmitTerm
+and app3.acad_prog = $AcadProg
+and app3.prog_action = 'APPL'
+and app3.prog_status = 'AP'
+End-Select
+
+End-Procedure
+!----------------------------------------------------
+Begin-Procedure Get-AdmAppData
+Let $AdmitType = ''
+!Let $LastSchool = ''
+
+Begin-Select Distinct
+
+at.ADMIT_TYPE
+at2.descr
+
+	Let $AdmitType = &at2.descr
+
+from ps_adm_appl_data at
+join ps_admit_type_tbl at2 on at2.admit_type = at.admit_type
+                        and at2.eff_status = 'A'
+                        and at2.effdt = (select max(ATT2.effdt) from ps_admit_type_tbl att2
+                                        where att2.institution = 'STCMP'
+                                        and att2.admit_type = at2.admit_type
+                                        and att2.effdt <= sysdate)
+where at.emplid = $Emplid
+and at.acad_career = $Career
+AND at.ADM_APPL_NBR = $AdmApplNbr
+End-Select
+
+End-Procedure
+
+!----------------------------------------------
+Begin-Procedure Get-AdmSubPlan
+Let $SubPlan = ''
+
+Begin-Select distinct
+SBP.ACAD_SUB_PLAN
+
+	Let $SubPlan = &SBP.ACAD_SUB_PLAN
+
+FROM PS_ADM_APPL_SBPLAN SBP
+WHERE SBP.EMPLID = $Emplid
+and sbp.acad_plan = $Plan
+AND SBP.ACAD_CAREER = $Career
+AND SBP.ADM_APPL_NBR = $AdmApplNbr
+and SBP.REQ_TERM = $AdmitTerm
+and sbp.effdt = (select max(sbp1.effdt) from ps_adm_appl_sbplan sbp1
+                where sbp1.emplid = sbp.emplid
+                and sbp1.acad_career = sbp.acad_career
+                and sbp1.stdnt_car_nbr = sbp.stdnt_car_nbr
+                and sbp1.adm_appl_nbr = sbp.adm_appl_nbr 
+                and sbp1.effdt <= sysdate)
+and sbp.effseq = (select max(sbp2.effseq) from ps_adm_appl_sbplan sbp2
+                where sbp2.emplid = sbp.emplid
+                and sbp2.acad_career = sbp.acad_career
+                and sbp2.stdnt_car_nbr = sbp.stdnt_car_nbr
+                and sbp2.adm_appl_nbr = sbp.adm_appl_nbr 
+                and sbp2.effdt = sbp.effdt)  
+End-Select
+
+End-Procedure
+
+!*********************************************************
+Begin-Procedure Get-Education 
+!Display 'Education'
+Let $CEEB = ''
+
+Let $SchoolType = ''
+Let $School_Name = ''
+
+	   Do Get-CEEB
+	   If $ExtOrgID = 'C210015688'
+	    Let $CEEB = '990999'
+	   Else
+	    Let $CEEB = &CB.CSU_EXT_ORG_CEEB
+	   End-if
+	
+	   If $CEEB = '' or
+	      $CEEB = ' '
+	      Do Get-CustomCode
+	    Let $CEEB = &TM.STA_AD012_CEEB
+	   End-if  
+	   
+	   Do Get-SchoolType
+	   If $EducType = '' or
+	      $EducType = ' '
+	   Let $SchoolType = 'UNKN'
+	   else
+	   Let $SchoolType = $EducType
+	   End-if
+	   
+End-Procedure
+
+!************************************************
+Begin-Procedure Get-CEEB
+! Note: county is extracted from the STA_COUNTY table that may 
+!       not be kept up to date
+!Display 'Getting CEEB'
+
+Let $CEEB = ''
+Let $SCH_COUNTY = ''
+Let $SCH_STATE = ''
+Let $COSAR = ''
+Let $SCHOOL_NAME = ''
+
+Begin-Select distinct
+CB.CSU_EXT_ORG_CEEB
+CB.CSU_CO_EXT_CODE
+EOS.DESCR
+CO.COUNTY
+L.STATE
+	Let $CEEB 	= &CB.CSU_EXT_ORG_CEEB
+	Let $COSAR 	= &CB.CSU_CO_EXT_CODE
+	Let $SCH_COUNTY	= &CO.COUNTY
+	Let $SCH_STATE	= &L.STATE
+	Let $SCHOOL_NAME = &EOS.DESCR
+
+FROM ps_CSU_COSAR_04MAP CB
+JOIN ps_EXT_ORG_TBL EOS ON EOS.EXT_ORG_ID = CB.EXT_ORG_ID
+JOIN ps_ORG_LOCATION L ON L.EXT_ORG_ID = EOS.EXT_ORG_ID
+   AND L.ORG_LOCATION = EOS.ORG_LOCATION
+LEFT OUTER JOIN ps_STA_COUNTY CO
+    ON substr(CO.POSTAL, 1, 5) = substr(CO.POSTAL, 1, 5)
+WHERE CB.EXT_ORG_ID = $ExtOrgID
+AND CB.EFFDT = (SELECT MAX(A1.EFFDT)
+                    FROM sysadm.PS_CSU_COSAR_04MAP A1
+                   WHERE A1.EXT_ORG_ID = CB.EXT_ORG_ID
+                     AND A1.EFFDT <= SYSDATE)
+AND EOS.EFFDT = (SELECT MAX(B1.EFFDT)
+                    FROM sysadm.PS_EXT_ORG_TBL B1
+                   WHERE B1.EXT_ORG_ID = EOS.EXT_ORG_ID
+                     AND B1.EFF_STATUS = 'A'
+                     AND B1.EFFDT <= SYSDATE)
+AND L.EFFDT = (SELECT MAX(L1.EFFDT)
+                    FROM sysadm.PS_ORG_LOCATION L1
+                   WHERE L1.EXT_ORG_ID = L.EXT_ORG_ID
+                     AND L1.ORG_LOCATION = L.ORG_LOCATION
+                     AND L1.EFF_STATUS = 'A'
+                     AND L1.EFFDT <= SYSDATE)
+
+End-Select
+End-Procedure
+!*********************************************
+Begin-Procedure Get-CustomCode
+!Display 'Custom Code'
+! Note: the STA_AD012_TMGMT table has some data for unknown
+!	schools, but is not currently maintained
+Let $CEEB = ''
+
+Begin-Select distinct
+
+TM.STA_AD012_CEEB
+TM.STA_AD012_COSAR
+TM.STA_AD012_CDS14
+TM.EXT_ORG_ID
+
+	Let $CEEB = &TM.STA_AD012_CEEB
+
+FROM sysadm.PS_STA_AD012_TMGMT TM
+WHERE TM.EXT_ORG_ID = $ExtOrgID
+End-Select
+
+End-Procedure
+!************************************************
+Begin-Procedure Get-SchoolType
+Let $EducType = ''
+
+Begin-Select distinct
+st.ext_career
+
+	Let $EducType = &st.ext_career
+	
+from sysadm.ps_ext_acad_data st
+where st.emplid = $Emplid
+and st.ext_org_id = $ExtOrgID
+end-select
+
+End-Procedure
+!*****************************************
+       
+!**********************************************************************************
+Begin-Procedure Write-Contacts-Header
+
+Write 1 from
+
+'PSID'
+$Delimiter
+'StanMail'
+$Delimiter
+'FERPA'
+$Delimiter
+'FirstName'
+$Delimiter
+'LastName'
+$Delimiter
+'MiddleName'
+$Delimiter
+'AddressLine1'
+$Delimiter
+'AddressLine2'
+$Delimiter
+'City'
+$Delimiter
+'State'
+$Delimiter
+'Zip'
+$Delimiter
+'DOB'
+$Delimiter
+'Ethnicity'
+$Delimiter
+'Mobile'
+$Delimiter
+'HomeEmail'
+$Delimiter
+'Gender'
+$Delimiter
+'AdmitTerm'
+$Delimiter
+'Residency'
+$Delimiter
+'Citizenship'
+$Delimiter
+'AppDate'
+$Delimiter
+'AppStatus'
+$Delimiter
+'AdmitDt'
+$Delimiter
+'AdmitType'
+$Delimiter
+'AcadProg'
+$Delimiter
+'AcadPlan'
+$Delimiter
+'SubPlan'
+$Delimiter
+'ActionReason'
+$Delimiter
+'Expected Grad Term'
+$Delimiter
+'Effective Date'
+
+End-Procedure
+!************************************
+!************************************
+Begin-Procedure Write-Contacts
+
+Write 1 from 
+
+$Emplid
+$Delimiter
+$StanMail
+$Delimiter
+$FERPA
+$Delimiter
+$FirstName
+$Delimiter
+$LastName
+$Delimiter
+$Middle	
+$Delimiter
+$Address1
+$Delimiter
+$Address2
+$Delimiter
+$City
+$Delimiter
+$State
+$Delimiter
+$Zip
+$Delimiter
+$DOB
+$Delimiter
+$Ethnicity
+$Delimiter
+$Cell
+$Delimiter
+$HomeEmail
+$Delimiter
+$Gender
+$Delimiter
+$AdmitTerm
+$Delimiter
+$Residency
+$Delimiter
+$Citizenship
+$Delimiter
+$ApplDt
+$Delimiter
+$Status
+$Delimiter
+$AdmitDt
+$Delimiter
+$AdmitType
+$Delimiter
+$AcadProg
+$Delimiter
+$Plan
+$Delimiter
+$SubPlan
+$Delimiter
+$ActnRsn
+$Delimiter
+$ExpGradTrm
+$Delimiter
+$Effdt
+!$LastUpDt
+
+End-Procedure
+
+!*******************************************************************************
+! TEST SCORES File
+!*******************************************************************************
+Begin-Procedure Get-TestScores
+Show 'Processing TestScores'
+Let #TestScoreCt = 0 
+
+!UEE applicants  
+Begin-Select distinct
+pts.emplid
+
+	Let $Emplid = &pts.emplid
+
+  	do Get-SAT-MSS
+  	If $TestScore <> ''
+  	  
+  	  Let $TestComp = 'MATH'
+  	  Do Manage-TestScores
+  	Else
+
+	   do Get-SAT-MATH
+	   If $TestScore <> ''
+	   Do Manage-TestScores
+	   End-if
+	End-if
+	
+	do Get-SAT-ERWS
+	If $TestScore <> ''
+	   Do Manage-TestScores
+	Else
+	  do Get-SAT-VERB
+	  If $TestScore <> ''
+	  Do Manage-TestScores
+	  End-if
+	End-if
+	
+	do Get-SAT-TOTAL
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	
+	do Get-ACT-MATH
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-ACT-ENGL
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-ACT-COMP
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-WPST
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-GMAT-VERB
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-GMAT-VERB-PCT
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-GMAT-QUANT
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-GMAT-QUANT-PCT
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-GRE-WRIT
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-GRE-WRIT-PCT
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-GRE-Verb
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	do Get-GRE-Verb-PCT
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	Do Get-GRE-Quant
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	Do Get-GRE-Quant-PCT
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+
+	Do Get-ELM-Score
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	Do Get-EPT-Score
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	Do Get-IELTS
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+
+	Do Get-TOEFL-COMP
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	Do Get-TOEFL-ESSAY
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	Do Get-TOEFL-LSTN
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	Do Get-TOEFL-READ
+	If $TestScore <> ''
+	Do Manage-TestScores
+	End-if
+	
+	Add 1 to #TestScoreCt
+	   
+from ps_adm_appl_prog pts 
+JOIN PS_ADM_APPL_PLAN PLT ON PLT.EMPLID = pts.EMPLID
+                        AND PLT.ACAD_CAREER = pts.ACAD_CAREER
+                        AND PLT.STDNT_CAR_NBR = pts.STDNT_CAR_NBR
+                        AND PLT.ADM_APPL_NBR = pts.ADM_APPL_NBR
+                        AND PLT.APPL_PROG_NBR = pts.APPL_PROG_NBR
+                        AND PLT.ACAD_PLAN IN ('CJ---BA-PB',
+                                              'HSCI-BS-PB',
+                                              'NURO-BS-PB',
+                                              'NURS-BS-PB',
+                                              'CJ---BA-UD',
+                                              'HSCI-BS-UD',
+                                              'NURO-BS-UD',
+                                              'SSCI-BA-UD',
+                                              'CHDV-MA-PD',
+                                              'SW---MW-PD',
+                                              'BUS--MB-PD',
+                                              'BUSO-MB-PD',
+                                              'SW---MW-PM',
+                                              'GNPM-CT-PO',
+                                              'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+                        AND PLT.EFFDT = (SELECT MAX(PL2T.EFFDT) FROM PS_ADM_APPL_PLAN PL2T
+                                       WHERE PL2T.EMPLID = PLT.EMPLID
+                                       AND PL2T.ACAD_CAREER = PLT.ACAD_CAREER
+                                       AND PL2T.STDNT_CAR_NBR = PLT.STDNT_CAR_NBR
+                                       AND PL2T.ADM_APPL_NBR = PLT.ADM_APPL_NBR
+                                       AND PL2T.APPL_PROG_NBR = PLT.APPL_PROG_NBR
+                                       AND PL2T.EFFDT <= SYSDATE)
+                        AND PLT.EFFSEQ = (SELECT MAX(PL3T.EFFSEQ) FROM PS_ADM_APPL_PLAN PL3T
+                                       WHERE PL3T.EMPLID = PLT.EMPLID
+                                       AND PL3T.ACAD_CAREER = PLT.ACAD_CAREER
+                                       AND PL3T.STDNT_CAR_NBR = PLT.STDNT_CAR_NBR
+                                       AND PL3T.ADM_APPL_NBR = PLT.ADM_APPL_NBR
+                                       AND PL3T.APPL_PROG_NBR = PLT.APPL_PROG_NBR
+                                       AND PL3T.EFFDT = PLT.EFFDT)  
+
+where pts.admit_term = $AdmitTerm
+and pts.EFFDT = (SELECT MAX(D_ED.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_ED
+                   WHERE pts.EMPLID = D_ED.EMPLID
+                     AND pts.ACAD_CAREER = D_ED.ACAD_CAREER
+                     AND pts.STDNT_CAR_NBR = D_ED.STDNT_CAR_NBR
+                     AND pts.ADM_APPL_NBR = D_ED.ADM_APPL_NBR
+                     AND pts.APPL_PROG_NBR = D_ED.APPL_PROG_NBR
+                     AND D_ED.EFFDT <= SYSDATE)
+AND pts.EFFSEQ = (SELECT MAX(D_ES.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_ES
+                    WHERE pts.EMPLID = D_ES.EMPLID
+                      AND pts.ACAD_CAREER = D_ES.ACAD_CAREER
+                      AND pts.STDNT_CAR_NBR = D_ES.STDNT_CAR_NBR
+                      AND pts.ADM_APPL_NBR = D_ES.ADM_APPL_NBR
+                      AND pts.APPL_PROG_NBR = D_ES.APPL_PROG_NBR
+                      AND pts.EFFDT = D_ES.EFFDT) 
+union
+
+SELECT DISTINCT
+
+PGTs.EMPLID
+
+FROM
+(
+WITH vTerm AS
+ (SELECT *
+    FROM PS_TERM_TBL
+   WHERE INSTITUTION = 'STCMP'
+     AND ACAD_CAREER = 'UGRD'
+   AND STRM = $AdmitTerm),
+vAcadPlan AS
+ (SELECT PLN.EMPLID,
+         PLN.ACAD_CAREER,
+         PLN.STDNT_CAR_NBR,
+         PLN.EFFDT,
+         PLN.EFFSEQ,
+         PLN.ACAD_PLAN,
+         PLN.PLAN_SEQUENCE,
+         CASE WHEN PLN.ACAD_PLAN IN ('CJ---BA-PB',
+                                    'HSCI-BS-PB',
+                                    'NURO-BS-PB',
+                                    'NURS-BS-PB',
+                                    'CJ---BA-UD',
+                                    'HSCI-BS-UD',
+                                    'NURO-BS-UD',
+                                    'SSCI-BA-UD',
+                                    'CHDV-MA-PD',
+                                    'SW---MW-PD',
+                                    'BUS--MB-PD',
+                                    'BUSO-MB-PD',
+                                    'SW---MW-PM',
+                                    'GNPM-CT-PO',
+                                    'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+                                    THEN
+            'Y'
+           ELSE
+            'N'
+         END IsSpecialPlan
+    FROM PS_ACAD_PLAN PLN
+   WHERE PLN.ACAD_CAREER != 'EXED'
+     AND PLN.EFFSEQ = (SELECT MAX(EFFSEQ)
+                         FROM PS_ACAD_PLAN
+                        WHERE EMPLID = PLN.EMPLID
+                          AND ACAD_CAREER = PLN.ACAD_CAREER
+                          AND STDNT_CAR_NBR = PLN.STDNT_CAR_NBR
+                          AND EFFDT = PLN.EFFDT)),
+vAcadProg AS
+ (SELECT PRG.EMPLID,
+         PRG.ACAD_CAREER,
+         PRG.STDNT_CAR_NBR,
+         PRG.ACAD_PROG,
+         PRG.EFFDT,
+         PRG.EFFSEQ,
+         PRG.ADMIT_TERM,
+         prg.adm_appl_nbr,
+         prg.prog_status,
+         prg.prog_action,
+         prg.prog_reason,
+         prg.exp_grad_term
+    FROM PS_ACAD_PROG PRG
+   WHERE PRG.EFFSEQ = (SELECT MAX(EFFSEQ)
+                         FROM PS_ACAD_PROG
+                        WHERE EMPLID = PRG.EMPLID
+                          AND ACAD_CAREER = PRG.ACAD_CAREER
+                          AND STDNT_CAR_NBR = PRG.STDNT_CAR_NBR
+                          AND EFFDT = PRG.EFFDT))
+SELECT TRM.STRM,
+       CPLN.EMPLID,
+       CPLN.ACAD_CAREER,
+       CPLN.STDNT_CAR_NBR,
+       CPLN.EFFDT,
+       CPRG.ADMIT_TERM,
+       CPRG.ACAD_PROG,
+       CPRG.PROG_STATUS,
+       CPRG.PROG_ACTION,
+       CPRG.PROG_REASON,
+       CPRG.EXP_GRAD_TERM,
+       CPLN.ACAD_PLAN,
+       PPLN.EFFDT         PREVIOUS_PLAN_EFFDT,
+       PPLN.ACAD_PLAN     PREVIOUS_PLAN
+  FROM vTerm TRM
+  JOIN vAcadPlan CPLN ON CPLN.IsSpecialPlan = 'Y'
+                     AND CPLN.EFFDT =
+                         (SELECT MAX(EFFDT)
+                            FROM vAcadPlan
+                           WHERE EMPLID = CPLN.EMPLID
+                             AND ACAD_CAREER = CPLN.ACAD_CAREER
+                             AND STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                             AND EFFDT BETWEEN TRM.TERM_BEGIN_DT AND
+                                 TRM.TERM_END_DT)
+  JOIN vAcadPlan PPLN ON PPLN.EMPLID = CPLN.EMPLID
+                     AND PPLN.ACAD_CAREER = CPLN.ACAD_CAREER
+                     AND PPLN.STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                     AND PPLN.IsSpecialPlan = 'N'
+                     AND PPLN.EFFDT =
+                         (SELECT MAX(EFFDT)
+                            FROM vAcadPlan
+                           WHERE EMPLID = PPLN.EMPLID
+                             AND ACAD_CAREER = PPLN.ACAD_CAREER
+                             AND STDNT_CAR_NBR = PPLN.STDNT_CAR_NBR
+                             AND EFFDT < TRM.TERM_BEGIN_DT)
+  JOIN vAcadProg CPRG ON CPRG.EMPLID = CPLN.EMPLID
+                     AND CPRG.ACAD_CAREER = CPLN.ACAD_CAREER
+                     AND CPRG.STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                     AND CPRG.EFFDT = CPLN.EFFDT
+                     AND CPRG.EFFSEQ = CPLN.EFFSEQ
+                     AND CPRG.ADMIT_TERM < TRM.STRM
+  JOIN PS_STDNT_CAR_TERM SCT ON SCT.EMPLID = CPLN.EMPLID
+                            AND SCT.STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                            AND SCT.ACAD_CAREER = CPLN.ACAD_CAREER
+                            AND SCT.STRM = TRM.STRM
+ ORDER BY 1, 2) PGTs
+ where not exists (select 1 from ps_adm_appl_prog app
+                where app.emplid = PGTs.emplid
+               and app.admit_term = $AdmitTerm)
+
+End-Select
+
+End-Procedure
+!****************************************
+Begin-Procedure Manage-TestScores
+
+   Do Write-TestScores
+   
+End-Procedure
+!*************************************
+
+Begin-Procedure Get-SAT-MSS
+!Display 'SAT-MSS'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+SATS.EMPLID
+SATS.TEST_ID
+SATS.TEST_COMPONENT
+to_char(SATS.TEST_DT,'mm/dd/yyyy') &SATS.TEST_DT
+nvl(to_char(MAX(SATS.SCORE)),' ') 	&SATS.SCORE
+		
+	Let $TestType = &SATS.TEST_ID
+	Let $TestDt = &SATS.TEST_DT
+	Let $TestComp = &SATS.TEST_COMPONENT
+	Let $TestScore = &SATS.SCORE
+		
+    
+FROM PS_STDNT_TEST_COMP SATS
+WHERE SATS.TEST_ID = 'SAT'
+AND SATS.TEST_COMPONENT = 'MSS'
+AND SATS.EMPLID = $Emplid
+GROUP BY SATS.EMPLID,
+    	 SATS.TEST_ID,
+    	 SATS.TEST_COMPONENT,
+	 SATS.TEST_DT
+end-select
+end-procedure
+
+!*************************************************
+Begin-Procedure Get-SAT-MATH
+!Display 'SAT-MATH'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+SAT.EMPLID
+SAT.TEST_ID
+SAT.TEST_COMPONENT
+to_char(SAT.TEST_DT,'mm/dd/yyyy') &SAT.TEST_DT
+nvl(to_char(MAX(SAT.SCORE)),' ') 	&SAT.SCORE
+		
+	Let $TestType = &SAT.TEST_ID
+	Let $TestDt = &SAT.TEST_DT
+	Let $TestComp = &SAT.TEST_COMPONENT
+	Let $TestScore = &SAT.SCORE	
+    
+FROM PS_STDNT_TEST_COMP SAT
+WHERE SAT.TEST_ID = 'SAT'
+AND SAT.TEST_COMPONENT = 'MATH'
+AND SAT.EMPLID = $Emplid
+GROUP BY SAT.EMPLID,
+    	 SAT.TEST_ID,
+    	 SAT.TEST_COMPONENT,
+	 SAT.TEST_DT
+end-select
+end-procedure
+
+!*****************************************************
+Begin-Procedure Get-SAT-ERWS
+!Display 'SAT-ERWS'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+SATW.EMPLID
+SATW.TEST_ID
+SATW.TEST_COMPONENT
+to_char(SATW.TEST_DT,'mm/dd/yyyy') &SATW.TEST_DT
+nvl(to_char(MAX(SATW.SCORE)),' ') 	&SATW.SCORE
+		
+	Let $TestType = &SATW.TEST_ID
+	Let $TestDt = &SATW.TEST_DT
+	Let $TestComp = &SATW.TEST_COMPONENT
+	Let $TestScore = &SATW.SCORE
+	 	  	   
+FROM PS_STDNT_TEST_COMP SATW
+WHERE SATW.TEST_ID = 'SAT'
+AND SATW.TEST_COMPONENT = 'ERWS'
+AND SATW.EMPLID = $Emplid
+GROUP BY SATW.EMPLID,
+    	 SATW.TEST_ID,
+    	 SATW.TEST_COMPONENT,
+	 SATW.TEST_DT
+end-select
+end-procedure
+
+!*****************************************************
+Begin-Procedure Get-SAT-VERB
+!Display 'SAT-VERB'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+SATV.EMPLID
+SATV.TEST_ID
+SATV.TEST_COMPONENT
+to_char(SATV.TEST_DT,'mm/dd/yyyy') &SATV.TEST_DT
+nvl(to_char(MAX(SATV.SCORE)),' ') 	&SATV.SCORE
+		
+	Let $TestType = &SATV.TEST_ID
+	Let $TestDt = &SATV.TEST_DT
+	Let $TestComp = &SATV.TEST_COMPONENT
+	Let $TestScore = &SATV.SCORE
+	 	  	
+    
+FROM PS_STDNT_TEST_COMP SATV
+WHERE SATV.TEST_ID = 'SAT'
+AND SATV.TEST_COMPONENT = 'VERB'
+AND SATV.EMPLID = $Emplid
+GROUP BY SATV.EMPLID,
+    	 SATV.TEST_ID,
+    	 SATV.TEST_COMPONENT,
+	 SATV.TEST_DT
+end-select
+end-procedure
+
+!*****************************************************
+Begin-Procedure Get-SAT-TOTAL
+!Display 'SAT-TOTAL'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+SATT.EMPLID
+SATT.TEST_ID
+SATT.TEST_COMPONENT
+to_char(SATT.TEST_DT,'mm/dd/yyyy') &SATT.TEST_DT
+nvl(to_char(MAX(SATT.SCORE)),' ') 	&SATT.SCORE
+		
+	Let $TestType = &SATT.TEST_ID
+	Let $TestDt = &SATT.TEST_DT
+	Let $TestComp = &SATT.TEST_COMPONENT
+	Let $TestScore = &SATT.SCORE
+		
+    
+FROM PS_STDNT_TEST_COMP SATT
+WHERE SATT.TEST_ID = 'SAT'
+AND SATT.TEST_COMPONENT = 'TOTAL'
+AND SATT.EMPLID = $Emplid
+GROUP BY SATT.EMPLID,
+    	 SATT.TEST_ID,
+    	 SATT.TEST_COMPONENT,
+	 SATT.TEST_DT
+end-select
+end-procedure
+
+!*****************************************************
+
+Begin-Procedure Get-ACT-MATH
+!Display 'ACT-MATH'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+ACT.EMPLID
+ACT.TEST_ID
+ACT.TEST_COMPONENT
+to_char(ACT.TEST_DT,'mm/dd/yyyy') &ACT.TEST_DT
+nvl(to_char(MAX(ACT.SCORE)),' ') 	&ACT.SCORE
+		
+	Let $TestType = &ACT.TEST_ID
+	Let $TestDt = &ACT.TEST_DT
+	Let $TestComp = &ACT.TEST_COMPONENT
+	Let $TestScore = &ACT.SCORE
+		    
+FROM PS_STDNT_TEST_COMP ACT
+WHERE ACT.TEST_ID = 'ACT'
+AND ACT.TEST_COMPONENT = 'MATH'
+AND ACT.EMPLID = $Emplid
+GROUP BY ACT.EMPLID,
+    	 ACT.TEST_ID,
+    	 ACT.TEST_COMPONENT,
+	 ACT.TEST_DT
+end-select
+end-procedure
+
+!*****************************************************
+
+Begin-Procedure Get-ACT-ENGL
+!Display 'ACT-ENGL'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+ACTE.EMPLID
+ACTE.TEST_ID
+ACTE.TEST_COMPONENT
+to_char(ACTE.TEST_DT,'mm/dd/yyyy') &ACTE.TEST_DT
+nvl(to_char(MAX(ACTE.SCORE)),' ') 	&ACTE.SCORE
+		
+	Let $TestType = &ACTE.TEST_ID
+	Let $TestDt = &ACTE.TEST_DT
+	Let $TestComp = &ACTE.TEST_COMPONENT
+	Let $TestScore = &ACTE.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP ACTE
+WHERE ACTE.TEST_ID = 'ACT'
+AND ACTE.TEST_COMPONENT = 'ENGL'
+AND ACTE.EMPLID = $Emplid
+GROUP BY ACTE.EMPLID,
+    	 ACTE.TEST_ID,
+    	 ACTE.TEST_COMPONENT,
+	 ACTE.TEST_DT
+end-select
+end-procedure
+!--------------------------------------------------------
+Begin-Procedure Get-ACT-COMP
+!Display 'ACT-COMP'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+ACTC.EMPLID
+ACTC.TEST_ID
+ACTC.TEST_COMPONENT
+to_char(ACTC.TEST_DT,'mm/dd/yyyy') &ACTC.TEST_DT
+nvl(to_char(MAX(ACTC.SCORE)),' ') 	&ACTC.SCORE
+		
+	Let $TestType = &ACTC.TEST_ID
+	Let $TestDt = &ACTC.TEST_DT
+	Let $TestComp = &ACTC.TEST_COMPONENT
+	Let $TestScore = &ACTC.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP ACTC
+WHERE ACTC.TEST_ID = 'ACT'
+AND ACTC.TEST_COMPONENT = 'COMP'
+AND ACTC.EMPLID = $Emplid
+GROUP BY ACTC.EMPLID,
+    	 ACTC.TEST_ID,
+    	 ACTC.TEST_COMPONENT,
+	 ACTC.TEST_DT
+end-select
+end-procedure
+!----------------------------------------------
+Begin-Procedure Get-WPST
+!Display 'WPST'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+WP.EMPLID
+WP.TEST_ID
+WP.TEST_COMPONENT
+to_char(WP.TEST_DT,'mm/dd/yyyy') &WP.TEST_DT
+nvl(to_char(MAX(WP.SCORE)),' ') 	&WP.SCORE
+		
+	Let $TestType = &WP.TEST_ID
+	Let $TestDt = &WP.TEST_DT
+	Let $TestComp = &WP.TEST_COMPONENT
+	Let $TestScore = &WP.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP WP
+WHERE WP.TEST_ID = 'WPST'
+AND WP.EMPLID = $Emplid
+GROUP BY WP.EMPLID,
+    	 WP.TEST_ID,
+    	 WP.TEST_COMPONENT,
+	 WP.TEST_DT
+end-select
+end-procedure
+!----------------------------------------------
+Begin-Procedure Get-GMAT-VERB
+!Display 'GMAT-VERB'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GM.EMPLID
+GM.TEST_ID
+GM.TEST_COMPONENT
+to_char(GM.TEST_DT,'mm/dd/yyyy') &GM.TEST_DT
+nvl(to_char(MAX(GM.SCORE)),' ') 	&GM.SCORE
+		
+	Let $TestType = &GM.TEST_ID
+	Let $TestDt = &GM.TEST_DT
+	Let $TestComp = &GM.TEST_COMPONENT
+	Let $TestScore = &GM.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP GM
+WHERE GM.TEST_ID = 'GMAT'
+AND GM.TEST_COMPONENT = 'VERB'
+AND GM.EMPLID = $Emplid
+GROUP BY GM.EMPLID,
+    	 GM.TEST_ID,
+    	 GM.TEST_COMPONENT,
+	 GM.TEST_DT
+end-select
+end-procedure
+!-------------------------------------------------
+Begin-Procedure Get-GMAT-VERB-PCT
+!Display 'GMAT-VERB-PCT'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GMP.EMPLID
+GMP.TEST_ID
+GMP.TEST_COMPONENT
+to_char(GMP.TEST_DT,'mm/dd/yyyy') &GMP.TEST_DT
+nvl(to_char(MAX(GMP.PERCENTILE)),' ') 	&GMP.PERCENTILE
+		
+	Let $TestType = &GMP.TEST_ID
+	Let $TestDt = &GMP.TEST_DT
+	Let $TestComp = 'VERB_PCT'
+	Let $TestScore = &GMP.PERCENTILE
+    
+FROM PS_STDNT_TEST_COMP GMP
+WHERE GMP.TEST_ID = 'GMAT'
+AND GMP.TEST_COMPONENT = 'VERB'
+AND GMP.EMPLID = $Emplid
+GROUP BY GMP.EMPLID,
+    	 GMP.TEST_ID,
+    	 GMP.TEST_COMPONENT,
+	 GMP.TEST_DT
+end-select
+end-procedure
+!-------------------------------------------------
+Begin-Procedure Get-GMAT-QUANT
+!Display 'GMAT-QUANT'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GMQ.EMPLID
+GMQ.TEST_ID
+GMQ.TEST_COMPONENT
+to_char(GMQ.TEST_DT,'mm/dd/yyyy') &GMQ.TEST_DT
+nvl(to_char(MAX(GMQ.SCORE)),' ') 	&GMQ.SCORE
+		
+	Let $TestType = &GMQ.TEST_ID
+	Let $TestDt = &GMQ.TEST_DT
+	Let $TestComp = &GMQ.TEST_COMPONENT
+	Let $TestScore = &GMQ.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP GMQ
+WHERE GMQ.TEST_ID = 'GMAT'
+AND GMQ.TEST_COMPONENT = 'QUANT'
+AND GMQ.EMPLID = $Emplid
+GROUP BY GMQ.EMPLID,
+    	 GMQ.TEST_ID,
+    	 GMQ.TEST_COMPONENT,
+	 GMQ.TEST_DT
+end-select
+end-procedure
+
+Begin-Procedure Get-GMAT-QUANT-PCT
+!Display 'GMAT-QUANT-PCT'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GMQP.EMPLID
+GMQP.TEST_ID
+GMQP.TEST_COMPONENT
+to_char(GMQP.TEST_DT,'mm/dd/yyyy') &GMQP.TEST_DT
+nvl(to_char(MAX(GMQP.PERCENTILE)),' ') 	&GMQP.PERCENTILE
+		
+	Let $TestType = &GMQP.TEST_ID
+	Let $TestDt = &GMQP.TEST_DT
+	Let $TestComp = 'QUANT_PCT'
+	Let $TestScore = &GMQP.PERCENTILE
+	
+    
+FROM PS_STDNT_TEST_COMP GMQP
+WHERE GMQP.TEST_ID = 'GMAT'
+AND GMQP.TEST_COMPONENT = 'QUANT'
+AND GMQP.EMPLID = $Emplid
+GROUP BY GMQP.EMPLID,
+    	 GMQP.TEST_ID,
+    	 GMQP.TEST_COMPONENT,
+	 GMQP.TEST_DT
+end-select
+end-procedure
+!-----------------------------------------------
+Begin-Procedure Get-GRE-WRIT
+!Display 'GRE-WRIT'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GRE.EMPLID
+GRE.TEST_ID
+GRE.TEST_COMPONENT
+to_char(GRE.TEST_DT,'mm/dd/yyyy') &GRE.TEST_DT
+nvl(to_char(MAX(GRE.SCORE)),' ') 	&GRE.SCORE
+		
+	Let $TestType = &GRE.TEST_ID
+	Let $TestDt = &GRE.TEST_DT
+	Let $TestComp = &GRE.TEST_COMPONENT
+	Let $TestScore = &GRE.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP GRE
+WHERE GRE.TEST_ID = 'GRE'
+AND GRE.TEST_COMPONENT = 'WRIT'
+AND GRE.EMPLID = $Emplid
+GROUP BY GRE.EMPLID,
+    	 GRE.TEST_ID,
+    	 GRE.TEST_COMPONENT,
+	 GRE.TEST_DT
+end-select
+end-procedure
+
+Begin-Procedure Get-GRE-WRIT-PCT
+!Display 'GRE-WRIT-PCT'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GREP.EMPLID
+GREP.TEST_ID
+GREP.TEST_COMPONENT
+to_char(GREP.TEST_DT,'mm/dd/yyyy') &GREP.TEST_DT
+nvl(to_char(MAX(GREP.PERCENTILE)),' ') 	&GREP.PERCENTILE
+		
+	Let $TestType = &GREP.TEST_ID
+	Let $TestDt = &GREP.TEST_DT
+	Let $TestComp = 'WRIT_PCT'
+	Let $TestScore = &GREP.PERCENTILE
+	
+    
+FROM PS_STDNT_TEST_COMP GREP
+WHERE GREP.TEST_ID = 'GRE'
+AND GREP.TEST_COMPONENT = 'WRIT'
+AND GREP.EMPLID = $Emplid
+GROUP BY GREP.EMPLID,
+    	 GREP.TEST_ID,
+    	 GREP.TEST_COMPONENT,
+	 GREP.TEST_DT
+end-select
+end-procedure
+!----------------------------------------------------
+Begin-Procedure Get-GRE-VERB
+!Display 'GRE-VERB'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GREV.EMPLID
+GREV.TEST_ID
+GREV.TEST_COMPONENT
+to_char(GREV.TEST_DT,'mm/dd/yyyy') &GREV.TEST_DT
+nvl(to_char(MAX(GREV.SCORE)),' ') 	&GREV.SCORE
+		
+	Let $TestType = &GREV.TEST_ID
+	Let $TestDt = &GREV.TEST_DT
+	Let $TestComp = &GREV.TEST_COMPONENT
+	Let $TestScore = &GREV.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP GREV
+WHERE GREV.TEST_ID = 'GRE'
+AND GREV.TEST_COMPONENT = 'VERB'
+AND GREV.EMPLID = $Emplid
+GROUP BY GREV.EMPLID,
+    	 GREV.TEST_ID,
+    	 GREV.TEST_COMPONENT,
+	 GREV.TEST_DT
+end-select
+end-procedure
+!--------------------------------------------
+Begin-Procedure Get-GRE-VERB-PCT
+!Display 'GRE-VERB-PCT'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GREVP.EMPLID
+GREVP.TEST_ID
+GREVP.TEST_COMPONENT
+to_char(GREVP.TEST_DT,'mm/dd/yyyy') &GREVP.TEST_DT
+nvl(to_char(MAX(GREVP.PERCENTILE)),' ') 	&GREVP.PERCENTILE
+		
+	Let $TestType = &GREVP.TEST_ID
+	Let $TestDt = &GREVP.TEST_DT
+	Let $TestComp = 'VERB_PCT'
+	Let $TestScore = &GREVP.PERCENTILE
+	
+    
+FROM PS_STDNT_TEST_COMP GREVP
+WHERE GREVP.TEST_ID = 'GRE'
+AND GREVP.TEST_COMPONENT = 'VERB'
+AND GREVP.EMPLID = $Emplid
+GROUP BY GREVP.EMPLID,
+    	 GREVP.TEST_ID,
+    	 GREVP.TEST_COMPONENT,
+	 GREVP.TEST_DT
+end-select
+end-procedure
+
+!-------------------------------------------------------
+Begin-Procedure Get-GRE-QUANT
+!Display 'GRE-QUANT'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GREQ.EMPLID
+GREQ.TEST_ID
+GREQ.TEST_COMPONENT
+to_char(GREQ.TEST_DT,'mm/dd/yyyy') &GREQ.TEST_DT
+nvl(to_char(MAX(GREQ.SCORE)),' ') 	&GREQ.SCORE
+		
+	Let $TestType = &GREQ.TEST_ID
+	Let $TestDt = &GREQ.TEST_DT
+	Let $TestComp = &GREQ.TEST_COMPONENT
+	Let $TestScore = &GREQ.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP GREQ
+WHERE GREQ.TEST_ID = 'GRE'
+AND GREQ.TEST_COMPONENT = 'QUANT'
+AND GREQ.EMPLID = $Emplid
+GROUP BY GREQ.EMPLID,
+    	 GREQ.TEST_ID,
+    	 GREQ.TEST_COMPONENT,
+	 GREQ.TEST_DT
+end-select
+end-procedure
+
+!--------------------------------------------------
+Begin-Procedure Get-GRE-QUANT-PCT
+!Display 'GRE-QUANT-PCT'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+GREQP.EMPLID
+GREQP.TEST_ID
+GREQP.TEST_COMPONENT
+to_char(GREQP.TEST_DT,'mm/dd/yyyy') &GREQP.TEST_DT
+nvl(to_char(MAX(GREQP.PERCENTILE)),' ') 	&GREQP.PERCENTILE
+		
+	Let $TestType = &GREQP.TEST_ID
+	Let $TestDt = &GREQP.TEST_DT
+	Let $TestComp = 'QUANT_PCT'
+	Let $TestScore = &GREQP.PERCENTILE
+	
+    
+FROM PS_STDNT_TEST_COMP GREQP
+WHERE GREQP.TEST_ID = 'GRE'
+AND GREQP.TEST_COMPONENT = 'QUANT'
+AND GREQP.EMPLID = $Emplid
+GROUP BY GREQP.EMPLID,
+    	 GREQP.TEST_ID,
+    	 GREQP.TEST_COMPONENT,
+	 GREQP.TEST_DT
+end-select
+end-procedure
+
+!---------------------------------------------------
+Begin-Procedure Get-ELM-Score
+!Display 'ELM-SCORE'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+ELM.EMPLID
+ELM.TEST_ID
+ELM.TEST_COMPONENT
+to_char(ELM.TEST_DT,'mm/dd/yyyy')	&ELM.TEST_DT
+nvl(to_char(MAX(ELM.SCORE)),' ') 	&ELM.SCORE
+
+	Let $TestType = &ELM.TEST_ID
+	Let $TestDt = &ELM.TEST_DT
+	Let $TestComp = &ELM.TEST_COMPONENT
+	Let $TestScore = &ELM.SCORE
+
+FROM PS_STDNT_TEST_COMP ELM
+WHERE ELM.TEST_ID = 'ELM'
+AND ELM.EMPLID = $Emplid
+GROUP BY ELM.EMPLID,
+	 ELM.TEST_ID,
+	 ELM.TEST_COMPONENT,
+	 ELM.TEST_DT
+End-Select	 
+
+End-Procedure
+!------------------------------------------------------
+Begin-Procedure Get-EPT-Score
+!Display 'EPT-SCORE'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+EPT.EMPLID
+EPT.TEST_ID
+EPT.TEST_COMPONENT
+to_char(EPT.TEST_DT,'mm/dd/yyyy')  &EPT.TEST_DT
+nvl(to_char(MAX(EPT.SCORE)),' ') 	&EPT.SCORE
+
+	Let $TestType = &EPT.TEST_ID
+	Let $TestDt = &EPT.TEST_DT
+	Let $TestComp = &EPT.TEST_COMPONENT
+	Let $TestScore = &EPT.SCORE
+
+FROM PS_STDNT_TEST_COMP EPT
+WHERE EPT.TEST_ID = 'EPT'
+AND EPT.EMPLID = $Emplid
+GROUP BY EPT.EMPLID,
+	 EPT.TEST_ID,
+	 EPT.TEST_COMPONENT,
+	 EPT.TEST_DT
+End-Select	 
+
+End-Procedure
+!-------------------------------------------------------
+
+Begin-Procedure Get-IELTS
+!Display 'IELTS'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+IEL.EMPLID
+IEL.TEST_ID
+IEL.TEST_COMPONENT
+to_char(IEL.TEST_DT,'mm/dd/yyyy')  &IEL.TEST_DT
+nvl(to_char(MAX(IEL.SCORE)),' ') 	&IEL.SCORE
+
+	Let $TestType = &IEL.TEST_ID
+	Let $TestDt = &IEL.TEST_DT
+	Let $TestComp = &IEL.TEST_COMPONENT
+	Let $TestScore = &IEL.SCORE
+
+FROM PS_STDNT_TEST_COMP IEL
+WHERE IEL.TEST_ID = 'IELTS'
+AND IEL.EMPLID = $Emplid
+GROUP BY IEL.EMPLID,
+	 IEL.TEST_ID,
+	 IEL.TEST_COMPONENT,
+	 IEL.TEST_DT
+End-Select	 
+End-Procedure
+
+!------------------------------------------------
+Begin-Procedure Get-TOEFL-COMP
+!Display 'TOEFL-COMP'
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+TOEC.EMPLID
+TOEC.TEST_ID
+TOEC.TEST_COMPONENT
+to_char(TOEC.TEST_DT,'mm/dd/yyyy') &TOEC.TEST_DT
+nvl(to_char(MAX(TOEC.SCORE)),' ') 	&TOEC.SCORE
+		
+	Let $TestType = &TOEC.TEST_ID
+	Let $TestDt = &TOEC.TEST_DT
+	Let $TestComp = &TOEC.TEST_COMPONENT
+	Let $TestScore = &TOEC.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP TOEC
+WHERE TOEC.TEST_ID = 'TOEFL'
+AND TOEC.TEST_COMPONENT = 'COMP'
+AND TOEC.EMPLID = $Emplid
+GROUP BY TOEC.EMPLID,
+    	 TOEC.TEST_ID,
+    	 TOEC.TEST_COMPONENT,
+	 TOEC.TEST_DT
+end-select
+end-procedure
+
+!------------------------------------------------
+Begin-Procedure Get-TOEFL-ESSAY
+!Display 'TOEFL-ESSAY'
+
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+TOEE.EMPLID
+TOEE.TEST_ID
+TOEE.TEST_COMPONENT
+to_char(TOEE.TEST_DT,'mm/dd/yyyy') &TOEE.TEST_DT
+nvl(to_char(MAX(TOEE.SCORE)),' ') 	&TOEE.SCORE
+		
+	Let $TestType = &TOEE.TEST_ID
+	Let $TestDt = &TOEE.TEST_DT
+	Let $TestComp = &TOEE.TEST_COMPONENT
+	Let $TestScore = &TOEE.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP TOEE
+WHERE TOEE.TEST_ID = 'TOEFL'
+AND TOEE.TEST_COMPONENT = 'ESSAY'
+AND TOEE.EMPLID = $Emplid
+GROUP BY TOEE.EMPLID,
+    	 TOEE.TEST_ID,
+    	 TOEE.TEST_COMPONENT,
+	 TOEE.TEST_DT
+end-select
+end-procedure
+
+!------------------------------------------------
+Begin-Procedure Get-TOEFL-LSTN
+!Display 'TOEFL-LSTN'
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+TOEL.EMPLID
+TOEL.TEST_ID
+TOEL.TEST_COMPONENT
+to_char(TOEL.TEST_DT,'mm/dd/yyyy') &TOEL.TEST_DT
+nvl(to_char(MAX(TOEL.SCORE)),' ') 	&TOEL.SCORE
+		
+	Let $TestType = &TOEL.TEST_ID
+	Let $TestDt = &TOEL.TEST_DT
+	Let $TestComp = &TOEL.TEST_COMPONENT
+	Let $TestScore = &TOEL.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP TOEL
+WHERE TOEL.TEST_ID = 'TOEFL'
+AND TOEL.TEST_COMPONENT = 'LSTN'
+AND TOEL.EMPLID = $Emplid
+GROUP BY TOEL.EMPLID,
+    	 TOEL.TEST_ID,
+    	 TOEL.TEST_COMPONENT,
+	 TOEL.TEST_DT
+end-select
+end-procedure
+
+!------------------------------------------------
+Begin-Procedure Get-TOEFL-READ
+!Display 'TOEFL-READ'
+Let $TestType = ''
+Let $TestDt = ''
+Let $TestComp = ''
+Let $TestScore = ''
+
+Begin-Select 
+TOER.EMPLID
+TOER.TEST_ID
+TOER.TEST_COMPONENT
+to_char(TOER.TEST_DT,'mm/dd/yyyy') &TOER.TEST_DT
+nvl(to_char(MAX(TOER.SCORE)),' ') 	&TOER.SCORE
+		
+	Let $TestType = &TOER.TEST_ID
+	Let $TestDt = &TOER.TEST_DT
+	Let $TestComp = &TOER.TEST_COMPONENT
+	Let $TestScore = &TOER.SCORE
+	
+    
+FROM PS_STDNT_TEST_COMP TOER
+WHERE TOER.TEST_ID = 'TOEFL'
+AND TOER.TEST_COMPONENT = 'READ'
+AND TOER.EMPLID = $Emplid
+GROUP BY TOER.EMPLID,
+    	 TOER.TEST_ID,
+    	 TOER.TEST_COMPONENT,
+	 TOER.TEST_DT
+end-select
+end-procedure
+
+!------------------------------------------------
+!6/3/2021 Added procedure to fix TRANSCRIPT_FLAG discrepancies
+Begin-Procedure Check-RcvdStatus
+
+	If $TranscriptDt <> ''
+	Let $CheckedRcvdStatus = 'R'
+	Else
+	Let $CheckedRcvdStatus = $RcvdStatus
+	End-if
+
+end-procedure Check-RcvdStatus
+
+!**************************************************************************
+Begin-Procedure Get-Transcripts
+!5/20/2021 Added Received and Official/Unofficial Status
+!6/3/2021 Corrected TRANSCRIPT_FLAG discrepancies
+
+Move 0 to #TranscriptCt
+Display 'Processing Transcripts'
+
+Let $ExtOrgID = ''
+Let $Emplid = ''
+Let $SchoolName = ''
+Let $RcvdStatus = ''
+Let $OfficialTransFlag = ''
+
+Begin-Select distinct
+bb.emplid,
+SCH.EXT_ORG_ID,
+EOT.DESCR,
+! 8/11/20 change date value
+to_char(SCH.TRANSCRIPT_DT,'MM/DD/YYYY')  &TranscriptDt,
+!06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+!TO_CHAR(SCH.SCC_ROW_ADD_DTTM,'MM/DD/YYYY') &TranscriptDt,
+SCH.TRANSCRIPT_FLAG,
+SCH.TRANSCRIPT_TYPE
+
+	Let $Emplid = &bb.emplid
+	Let $ExtOrgID = &SCH.EXT_ORG_ID
+	Let $SchoolName = &EOT.DESCR
+	Let $TranscriptDt = &TranscriptDt
+	Let $RcvdStatus = &SCH.TRANSCRIPT_FLAG
+	Let $OfficialTransFlag = &SCH.TRANSCRIPT_TYPE							
+	
+	Do Get-Education
+	Do Check-RcvdStatus
+	
+	If $Emplid <> ''
+	!Add 1 to #TranscriptCt
+	Do Write-Schools
+	End-if
+
+FROM ps_adm_appl_prog bb                    
+JOIN PS_ADM_APPL_PLAN PLT ON PLT.EMPLID = bb.EMPLID
+                        AND PLT.ACAD_CAREER = bb.ACAD_CAREER
+                        AND PLT.STDNT_CAR_NBR = bb.STDNT_CAR_NBR
+                        AND PLT.ADM_APPL_NBR = bb.ADM_APPL_NBR
+                        AND PLT.APPL_PROG_NBR = bb.APPL_PROG_NBR
+                        AND PLT.ACAD_PLAN IN ('CJ---BA-PB',
+                                              'HSCI-BS-PB',
+                                              'NURO-BS-PB',
+                                              'NURS-BS-PB',
+                                              'CJ---BA-UD',
+                                              'HSCI-BS-UD',
+                                              'NURO-BS-UD',
+                                              'SSCI-BA-UD',
+                                              'CHDV-MA-PD',
+                                              'SW---MW-PD',
+                                              'BUS--MB-PD',
+                                              'BUSO-MB-PD',
+                                              'SW---MW-PM',
+                                              'GNPM-CT-PO',
+                                              'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+                        AND PLT.EFFDT = (SELECT MAX(t2.EFFDT) FROM PS_ADM_APPL_PLAN t2
+                                       WHERE t2.EMPLID = PLT.EMPLID
+                                       AND t2.ACAD_CAREER = PLT.ACAD_CAREER
+                                       AND t2.STDNT_CAR_NBR = PLT.STDNT_CAR_NBR
+                                       AND t2.ADM_APPL_NBR = PLT.ADM_APPL_NBR
+                                       AND t2.APPL_PROG_NBR = PLT.APPL_PROG_NBR
+                                       AND t2.EFFDT <= SYSDATE)
+                        AND PLT.EFFSEQ = (SELECT MAX(t3.EFFSEQ) FROM PS_ADM_APPL_PLAN t3
+                                       WHERE t3.EMPLID = PLT.EMPLID
+                                       AND t3.ACAD_CAREER = PLT.ACAD_CAREER
+                                       AND t3.STDNT_CAR_NBR = PLT.STDNT_CAR_NBR
+                                       AND t3.ADM_APPL_NBR = PLT.ADM_APPL_NBR
+                                       AND t3.APPL_PROG_NBR = PLT.APPL_PROG_NBR
+                                       AND t3.EFFDT = PLT.EFFDT)     
+JOIN PS_EXT_ACAD_DATA SCH ON sch.emplid = bb.EMPLID
+                      AND SCH.EXT_ORG_ID NOT IN ('STALAST60', 'STAOVERALL','C20000GPA')
+                      AND (SCH.EXT_ORG_ID LIKE 'C2%'
+                      or SCH.EXT_ORG_ID LIKE 'C3%')
+					  and SCH.EXT_DATA_NBR = (SELECT MAX(S2.EXT_DATA_NBR)
+					  !06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+					  !and SCH.SCC_ROW_ADD_DTTM = (SELECT MAX(S2.SCC_ROW_ADD_DTTM) 
+		                             FROM PS_EXT_ACAD_DATA S2
+		                             WHERE SCH.EMPLID = S2.EMPLID
+                                             AND SCH.EXT_ORG_ID = S2.EXT_ORG_ID)                 
+join PS_EXT_ORG_TBL EOT on EOT.EXT_ORG_ID = SCH.EXT_ORG_ID                   
+                    AND EOT.EFFDT = (SELECT MAX(EOT2.EFFDT) FROM PS_EXT_ORG_TBL EOT2
+                                    WHERE EOT.EXT_ORG_ID = EOT2.EXT_ORG_ID)
+where bb.admit_term = $AdmitTerm
+and BB.EFFDT = (SELECT MAX(D_ED.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_ED
+                   WHERE BB.EMPLID = D_ED.EMPLID
+                     AND BB.ACAD_CAREER = D_ED.ACAD_CAREER
+                     AND BB.STDNT_CAR_NBR = D_ED.STDNT_CAR_NBR
+                     AND BB.ADM_APPL_NBR = D_ED.ADM_APPL_NBR
+                     AND BB.APPL_PROG_NBR = D_ED.APPL_PROG_NBR
+                     AND D_ED.EFFDT <= SYSDATE)
+AND BB.EFFSEQ = (SELECT MAX(D_ES.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_ES
+                    WHERE BB.EMPLID = D_ES.EMPLID
+                      AND BB.ACAD_CAREER = D_ES.ACAD_CAREER
+                      AND BB.STDNT_CAR_NBR = D_ES.STDNT_CAR_NBR
+                      AND BB.ADM_APPL_NBR = D_ES.ADM_APPL_NBR
+                      AND BB.APPL_PROG_NBR = D_ES.APPL_PROG_NBR
+                      AND BB.EFFDT = D_ES.EFFDT) 
+
+UNION                      
+Select distinct
+bbC.emplid,
+SCHC.EXT_ORG_ID,
+EOTC.DESCR,
+to_char(SCHC.TRANSCRIPT_DT, 'MM/DD/YYYY'),
+!06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+!TO_CHAR(SCHC.SCC_ROW_ADD_DTTM,'MM/DD/YYYY'),
+SCHC.TRANSCRIPT_FLAG,
+SCHC.TRANSCRIPT_TYPE		   
+
+from ps_adm_appl_prog bbC
+JOIN PS_ADM_APPL_PLAN PLTC ON PLTC.EMPLID = bbC.EMPLID
+                        AND PLTC.ACAD_CAREER = bbC.ACAD_CAREER
+                        AND PLTC.STDNT_CAR_NBR = bbC.STDNT_CAR_NBR
+                        AND PLTC.ADM_APPL_NBR = bbC.ADM_APPL_NBR
+                        AND PLTC.APPL_PROG_NBR = bbC.APPL_PROG_NBR
+                        AND PLTC.ACAD_PLAN IN ('CJ---BA-PB',
+                                              'HSCI-BS-PB',
+                                              'NURO-BS-PB',
+                                              'NURS-BS-PB',
+                                              'CJ---BA-UD',
+                                              'HSCI-BS-UD',
+                                              'NURO-BS-UD',
+                                              'SSCI-BA-UD',
+                                              'CHDV-MA-PD',
+                                              'SW---MW-PD',
+                                              'BUS--MB-PD',
+                                              'BUSO-MB-PD',
+                                              'SW---MW-PM',
+                                              'GNPM-CT-PO',
+                                              'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+                        AND PLTC.EFFDT = (SELECT MAX(t2.EFFDT) FROM PS_ADM_APPL_PLAN t2
+                                       WHERE t2.EMPLID = PLTC.EMPLID
+                                       AND t2.ACAD_CAREER = PLTC.ACAD_CAREER
+                                       AND t2.STDNT_CAR_NBR = PLTC.STDNT_CAR_NBR
+                                       AND t2.ADM_APPL_NBR = PLTC.ADM_APPL_NBR
+                                       AND t2.APPL_PROG_NBR = PLTC.APPL_PROG_NBR
+                                       AND t2.EFFDT <= SYSDATE)
+                       AND PLTC.EFFSEQ = (SELECT MAX(t3.EFFSEQ) FROM PS_ADM_APPL_PLAN t3
+                                       WHERE t3.EMPLID = PLTC.EMPLID
+                                       AND t3.ACAD_CAREER = PLTC.ACAD_CAREER
+                                       AND t3.STDNT_CAR_NBR = PLTC.STDNT_CAR_NBR
+                                       AND t3.ADM_APPL_NBR = PLTC.ADM_APPL_NBR
+                                       AND t3.APPL_PROG_NBR = PLTC.APPL_PROG_NBR
+                                       AND t3.EFFDT = PLTC.EFFDT)     
+JOIN PS_EXT_ACAD_DATA SCHC ON schC.emplid = bbC.EMPLID
+                      and schC.ext_org_id = 'C30000128'     
+					  and SCHC.EXT_DATA_NBR = (SELECT MAX(S2.EXT_DATA_NBR)
+		                             FROM PS_EXT_ACAD_DATA S2
+		                             WHERE SCHC.EMPLID = S2.EMPLID
+                                             AND SCHC.EXT_ORG_ID = S2.EXT_ORG_ID)                                
+join PS_EXT_ORG_TBL EOTC on EOTC.EXT_ORG_ID = SCHC.EXT_ORG_ID                   
+                    AND EOTC.EFFDT = (SELECT MAX(EOT2.EFFDT) FROM PS_EXT_ORG_TBL EOT2
+                                    WHERE EOTC.EXT_ORG_ID = EOT2.EXT_ORG_ID)
+where bbC.admit_term = $AdmitTerm
+and BBC.EFFDT = (SELECT MAX(D_ED.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_ED
+                   WHERE BBC.EMPLID = D_ED.EMPLID
+                     AND BBC.ACAD_CAREER = D_ED.ACAD_CAREER
+                     AND BBC.STDNT_CAR_NBR = D_ED.STDNT_CAR_NBR
+                     AND BBC.ADM_APPL_NBR = D_ED.ADM_APPL_NBR
+                     AND BBC.APPL_PROG_NBR = D_ED.APPL_PROG_NBR
+                     AND D_ED.EFFDT <= SYSDATE)
+AND BBC.EFFSEQ = (SELECT MAX(D_ES.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_ES
+                    WHERE BBC.EMPLID = D_ES.EMPLID
+                      AND BBC.ACAD_CAREER = D_ES.ACAD_CAREER
+                      AND BBC.STDNT_CAR_NBR = D_ES.STDNT_CAR_NBR
+                      AND BBC.ADM_APPL_NBR = D_ES.ADM_APPL_NBR
+                      AND BBC.APPL_PROG_NBR = D_ES.APPL_PROG_NBR
+                      AND BBC.EFFDT = D_ES.EFFDT)
+
+UNION
+SELECT DISTINCT
+PGTT.EMPLID,
+PGTT.EXT_ORG_ID,
+PGTT.DESCR,
+to_char(PGTT.TRANSCRIPT_DT,'MM/DD/YYYY'),
+!06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+!TO_CHAR(PGTT.SCC_ROW_ADD_DTTM,'MM/DD/YYYY'),
+PGTT.TRANSCRIPT_FLAG,
+PGTT.TRANSCRIPT_TYPE
+
+FROM
+(
+WITH vTerm AS
+ (SELECT *
+    FROM PS_TERM_TBL
+   WHERE INSTITUTION = 'STCMP'
+     AND ACAD_CAREER = 'UGRD'
+   AND STRM = $STRM),
+vAcadPlan AS
+(SELECT PLN.EMPLID,
+         PLN.ACAD_CAREER,
+         PLN.STDNT_CAR_NBR,
+         PLN.EFFDT,
+         PLN.EFFSEQ,
+         PLN.ACAD_PLAN,
+         PLN.PLAN_SEQUENCE,
+         CASE WHEN PLN.ACAD_PLAN IN ('CJ---BA-PB',
+                                    'HSCI-BS-PB',
+                                    'NURO-BS-PB',
+                                    'NURS-BS-PB',
+                                    'CJ---BA-UD',
+                                    'HSCI-BS-UD',
+                                    'NURO-BS-UD',
+                                    'SSCI-BA-UD',
+                                    'CHDV-MA-PD',
+                                    'SW---MW-PD',
+                                    'BUS--MB-PD',
+                                    'BUSO-MB-PD',
+                                    'SW---MW-PM',
+                                    'GNPM-CT-PO',
+                                    'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+                                    THEN
+            'Y'
+           ELSE
+            'N'
+         END IsSpecialPlan
+FROM PS_ACAD_PLAN PLN
+WHERE PLN.ACAD_CAREER != 'EXED'
+AND PLN.EFFSEQ = (SELECT MAX(EFFSEQ)
+                         FROM PS_ACAD_PLAN
+                        WHERE EMPLID = PLN.EMPLID
+                          AND ACAD_CAREER = PLN.ACAD_CAREER
+                          AND STDNT_CAR_NBR = PLN.STDNT_CAR_NBR
+                          AND EFFDT = PLN.EFFDT)),
+vAcadProg AS
+(SELECT PRG.EMPLID,
+         PRG.ACAD_CAREER,
+         PRG.STDNT_CAR_NBR,
+         PRG.ACAD_PROG,
+         PRG.EFFDT,
+         PRG.EFFSEQ,
+         PRG.ADMIT_TERM,
+         prg.adm_appl_nbr,
+         prg.prog_status,
+         prg.prog_action,
+         prg.prog_reason,
+         prg.exp_grad_term  
+FROM PS_ACAD_PROG PRG
+WHERE PRG.EFFSEQ = (SELECT MAX(EFFSEQ)
+                         FROM PS_ACAD_PROG
+                        WHERE EMPLID = PRG.EMPLID
+                          AND ACAD_CAREER = PRG.ACAD_CAREER
+                          AND STDNT_CAR_NBR = PRG.STDNT_CAR_NBR
+                          AND EFFDT = PRG.EFFDT))
+SELECT TRM.STRM,
+       CPLN.EMPLID,
+       CPLN.ACAD_CAREER,
+       CPLN.STDNT_CAR_NBR,
+       CPLN.EFFDT,
+       CPRG.ADMIT_TERM,
+       CPRG.ACAD_PROG,
+       CPRG.PROG_STATUS,
+       CPRG.PROG_ACTION,
+       CPRG.PROG_REASON,
+       CPRG.EXP_GRAD_TERM,
+       CPLN.ACAD_PLAN,
+       PPLN.EFFDT         PREVIOUS_PLAN_EFFDT,
+       PPLN.ACAD_PLAN     PREVIOUS_PLAN,
+       SCH2.EXT_ORG_ID,
+	   SCH2.TRANSCRIPT_DT,
+       !06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+	   !SCH2.SCC_ROW_ADD_DTTM,
+       EOT2.DESCR,
+	   SCH2.TRANSCRIPT_FLAG,
+	   SCH2.TRANSCRIPT_TYPE
+FROM vTerm TRM
+JOIN vAcadPlan CPLN ON CPLN.IsSpecialPlan = 'Y'
+                     AND CPLN.EFFDT =
+                         (SELECT MAX(EFFDT)
+                            FROM vAcadPlan
+                           WHERE EMPLID = CPLN.EMPLID
+                             AND ACAD_CAREER = CPLN.ACAD_CAREER
+                             AND STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                             AND EFFDT BETWEEN TRM.TERM_BEGIN_DT AND
+                                 TRM.TERM_END_DT)
+JOIN vAcadPlan PPLN ON PPLN.EMPLID = CPLN.EMPLID
+                     AND PPLN.ACAD_CAREER = CPLN.ACAD_CAREER
+                     AND PPLN.STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                     AND PPLN.IsSpecialPlan = 'N'
+                     AND PPLN.EFFDT =
+                         (SELECT MAX(EFFDT)
+                            FROM vAcadPlan
+                           WHERE EMPLID = PPLN.EMPLID
+                             AND ACAD_CAREER = PPLN.ACAD_CAREER
+                             AND STDNT_CAR_NBR = PPLN.STDNT_CAR_NBR
+                             AND EFFDT < TRM.TERM_BEGIN_DT)
+JOIN vAcadProg CPRG ON CPRG.EMPLID = CPLN.EMPLID
+                     AND CPRG.ACAD_CAREER = CPLN.ACAD_CAREER
+                     AND CPRG.STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                     AND CPRG.EFFDT = CPLN.EFFDT
+                     AND CPRG.EFFSEQ = CPLN.EFFSEQ
+                     AND CPRG.ADMIT_TERM < TRM.STRM
+JOIN PS_STDNT_CAR_TERM SCT ON SCT.EMPLID = CPLN.EMPLID
+                            AND SCT.STDNT_CAR_NBR = CPLN.STDNT_CAR_NBR
+                            AND SCT.ACAD_CAREER = CPLN.ACAD_CAREER
+                             AND SCT.STRM = TRM.STRM
+JOIN PS_EXT_ACAD_DATA SCH2 ON sch2.emplid = CPLN.EMPLID
+                      AND SCH2.EXT_ORG_ID NOT IN ('STALAST60', 'STAOVERALL','C20000GPA')
+                      AND (SCH2.EXT_ORG_ID LIKE 'C2%'
+                      or SCH2.EXT_ORG_ID LIKE 'C3%')
+					  and SCH2.EXT_DATA_NBR = (SELECT MAX(S2s.EXT_DATA_NBR)
+					  !06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+					  !and SCH2.SCC_ROW_ADD_DTTM = (SELECT MAX(S2s.SCC_ROW_ADD_DTTM)
+					     FROM PS_EXT_ACAD_DATA S2s
+					     WHERE SCH2.EMPLID = S2s.EMPLID
+                                             AND SCH2.EXT_ORG_ID = S2s.EXT_ORG_ID)  
+join PS_EXT_ORG_TBL EOT2 on EOT2.EXT_ORG_ID = SCH2.EXT_ORG_ID                   
+                    AND EOT2.EFFDT = (SELECT MAX(EOT2s.EFFDT) FROM PS_EXT_ORG_TBL EOT2s
+                                    WHERE EOT2.EXT_ORG_ID = EOT2s.EXT_ORG_ID)                         
+                                   
+                            
+ORDER BY 1, 2) PGTT
+where not exists (select 1 from ps_adm_appl_prog app
+                where app.emplid = PGTT.emplid
+               and app.admit_term = $AdmitTerm)
+               
+UNION
+	       
+SELECT DISTINCT
+PGTTs.EMPLID,
+PGTTs.EXT_ORG_ID,
+PGTTs.SCHOOL_NAME,
+to_char(PGTTs.TRANSCRIPT_DATE,'MM/DD/YYYY'),
+PGTTs.TRANSCRIPT_FLAG,
+PGTTs.TRANSCRIPT_TYPE
+	       
+FROM
+(
+WITH vTerm AS
+(SELECT *
+FROM PS_TERM_TBL
+WHERE INSTITUTION = 'STCMP'
+AND ACAD_CAREER = 'UGRD'
+AND STRM = $STRM),
+vAcadPlan AS
+(SELECT PLNs.EMPLID,
+	PLNs.ACAD_CAREER,
+	PLNs.STDNT_CAR_NBR,
+	PLNs.EFFDT,
+	PLNs.EFFSEQ,
+	PLNs.ACAD_PLAN,
+	PLNs.PLAN_SEQUENCE,
+	CASE WHEN PLNs.ACAD_PLAN IN ('CJ---BA-PB',
+                              'HSCI-BS-PB',
+                              'NURO-BS-PB',
+                              'NURS-BS-PB',
+                              'CJ---BA-UD',
+                              'HSCI-BS-UD',
+                              'NURO-BS-UD',
+                              'SSCI-BA-UD',
+                              'CHDV-MA-PD',
+                              'SW---MW-PD',
+                              'BUS--MB-PD',
+                              'BUSO-MB-PD',
+                              'SW---MW-PM',
+                              'GNPM-CT-PO',
+                              'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+                                    THEN
+	                   'Y'
+	                  ELSE
+	                   'N'
+	                END IsSpecialPlan
+FROM PS_ACAD_PLAN PLNs
+WHERE PLNs.ACAD_CAREER <> 'EXED'
+AND PLNs.EFFSEQ = (SELECT MAX(EFFSEQ)
+	         FROM PS_ACAD_PLAN
+	         WHERE EMPLID = PLNs.EMPLID
+	         AND ACAD_CAREER = PLNs.ACAD_CAREER
+	         AND STDNT_CAR_NBR = PLNs.STDNT_CAR_NBR
+	         AND EFFDT = PLNs.EFFDT)),
+vAcadProg AS
+(SELECT PRGs.EMPLID,
+PRGs.ACAD_CAREER,
+PRGs.STDNT_CAR_NBR,
+PRGs.ACAD_PROG,
+PRGs.EFFDT,
+PRGs.EFFSEQ,
+PRGs.ADMIT_TERM,
+prgs.adm_appl_nbr,
+prgs.prog_status,
+prgs.prog_action,
+prgs.prog_reason,
+prgs.exp_grad_term  
+FROM PS_ACAD_PROG PRGs
+WHERE PRGs.EFFSEQ = (SELECT MAX(EFFSEQ)
+	             FROM PS_ACAD_PROG
+	             WHERE EMPLID = PRGs.EMPLID
+	             AND ACAD_CAREER = PRGs.ACAD_CAREER
+	             AND STDNT_CAR_NBR = PRGs.STDNT_CAR_NBR
+	             AND EFFDT = PRGs.EFFDT))
+SELECT 
+TRMs.STRM,
+CPLNs.EMPLID,
+CPLNs.ACAD_CAREER,
+CPLNs.STDNT_CAR_NBR,
+CPLNs.EFFDT,
+CPRGs.ADMIT_TERM,
+CPRGs.ACAD_PROG,
+CPRGs.PROG_STATUS,
+CPRGs.PROG_ACTION,
+CPRGs.PROG_REASON,
+CPRGs.EXP_GRAD_TERM,
+CPLNs.ACAD_PLAN,
+PPLNs.EFFDT         PREVIOUS_PLAN_EFFDT,
+PPLNs.ACAD_PLAN     PREVIOUS_PLAN,
+SCH2s.EXT_ORG_ID    EXT_ORG_ID,
+EOT2s.DESCR         SCHOOL_NAME,
+SCH2s.TRANSCRIPT_DT TRANSCRIPT_DATE,
+!06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+!SCH2s.SCC_ROW_ADD_DTTM TRANSCRIPT_DATE,
+SCH2s.TRANSCRIPT_FLAG,
+SCH2s.TRANSCRIPT_TYPE
+
+FROM vTerm TRMs
+JOIN vAcadPlan CPLNs ON CPLNs.IsSpecialPlan = 'Y'
+	                            AND CPLNs.EFFDT =
+	                                (SELECT MAX(EFFDT)
+	                                   FROM vAcadPlan
+	                                  WHERE EMPLID = CPLNs.EMPLID
+	                                    AND ACAD_CAREER = CPLNs.ACAD_CAREER
+	                                    AND STDNT_CAR_NBR = CPLNs.STDNT_CAR_NBR
+	                                    AND EFFDT BETWEEN TRMs.TERM_BEGIN_DT AND
+	                                        TRMs.TERM_END_DT)
+JOIN vAcadPlan PPLNs ON PPLNs.EMPLID = CPLNs.EMPLID
+	                            AND PPLNs.ACAD_CAREER = CPLNs.ACAD_CAREER
+	                            AND PPLNs.STDNT_CAR_NBR = CPLNs.STDNT_CAR_NBR
+	                            AND PPLNs.IsSpecialPlan = 'N'
+	                            AND PPLNs.EFFDT =
+	                                (SELECT MAX(EFFDT)
+	                                   FROM vAcadPlan
+	                                  WHERE EMPLID = PPLNs.EMPLID
+	                                    AND ACAD_CAREER = PPLNs.ACAD_CAREER
+	                                    AND STDNT_CAR_NBR = PPLNs.STDNT_CAR_NBR
+	                                    AND EFFDT < TRMs.TERM_BEGIN_DT)
+JOIN vAcadProg CPRGs ON CPRGs.EMPLID = CPLNs.EMPLID
+	                            AND CPRGs.ACAD_CAREER = CPLNs.ACAD_CAREER
+	                            AND CPRGs.STDNT_CAR_NBR = CPLNs.STDNT_CAR_NBR
+	                            AND CPRGs.EFFDT = CPLNs.EFFDT
+	                            AND CPRGs.EFFSEQ = CPLNs.EFFSEQ
+	                            AND CPRGs.ADMIT_TERM < TRMs.STRM
+JOIN PS_STDNT_CAR_TERM SCTs ON SCTs.EMPLID = CPLNs.EMPLID
+	                                   AND SCTs.STDNT_CAR_NBR = CPLNs.STDNT_CAR_NBR
+	                                   AND SCTs.ACAD_CAREER = CPLNs.ACAD_CAREER
+	                                    AND SCTs.STRM = TRMs.STRM
+JOIN PS_EXT_ACAD_DATA SCH2s ON sch2s.emplid = CPLNs.EMPLID
+	                             AND SCH2s.EXT_ORG_ID = 'C30000128'    
+					  and SCH2s.EXT_DATA_NBR = (SELECT MAX(S2.EXT_DATA_NBR)
+		                             FROM PS_EXT_ACAD_DATA S2
+		                             WHERE SCH2s.EMPLID = S2.EMPLID
+                                             AND SCH2s.EXT_ORG_ID = S2.EXT_ORG_ID)                   
+join PS_EXT_ORG_TBL EOT2s on EOT2s.EXT_ORG_ID = SCH2s.EXT_ORG_ID                   
+	                           AND EOT2s.EFFDT = (SELECT MAX(EOT2b.EFFDT) FROM PS_EXT_ORG_TBL EOT2b
+	                                           WHERE EOT2s.EXT_ORG_ID = EOT2b.EXT_ORG_ID)                         
+	                                          
+	                                   
+ORDER BY 1, 2) PGTTs
+where not exists (select 1 from ps_adm_appl_prog app
+	                       where app.emplid = PGTTs.emplid
+	                      and app.admit_term = $AdmitTerm)	                             
+
+End-Select
+		Display 'TranscriptCt: ' noline
+		Display #TranscriptCt
+		Display '---------------------'
+
+End-Procedure Get-Transcripts
+
+
+!*******************************************************************************
+Begin-Procedure Write-TestScores-Header 
+
+write 2 from
+
+'PSID'
+$Delimiter
+'Test_Type'
+$Delimiter
+'Test_Date'
+$Delimiter
+'Test_Component'
+$Delimiter
+'Test_Score'
+
+
+End-Procedure
+
+
+Begin-Procedure Write-TestScores
+write 2 from
+
+$Emplid
+$Delimiter
+$TestType
+$Delimiter
+$TestDt
+$Delimiter
+$TestComp
+$Delimiter
+$TestScore
+
+
+End-Procedure
+!-----------------------------------------
+Begin-Procedure Write-Schools-Header 
+
+write 3 from
+
+'PSID'
+$Delimiter
+'Ext_Org_ID'
+$Delimiter
+'School Name'
+$Delimiter
+'School_Type'
+$Delimiter
+'CEEB'
+$Delimiter
+'COSAR'
+$Delimiter
+!'School_County'
+!$Delimiter
+'School_State'
+$Delimiter
+'Transcript Dt'
+$Delimiter
+'Received Status'
+$Delimiter
+'Unofficial/Official'
+
+End-Procedure
+
+!--------------------------------------------------------
+Begin-Procedure Write-Schools
+write 3 from
+
+$Emplid
+$Delimiter
+$ExtOrgID
+$Delimiter
+$School_Name
+$Delimiter
+$SchoolType
+$Delimiter
+$CEEB
+$Delimiter
+$COSAR
+$Delimiter
+!$SCH_COUNTY	
+!$Delimiter
+$SCH_STATE
+$Delimiter
+$TranscriptDt
+$Delimiter
+$CheckedRcvdStatus
+$Delimiter
+$OfficialTransFlag
+
+End-Procedure
+
+!*******************************************************************************
+!********************************************************************************
+!GROUP 2 - Students
+! All Students past/current, eligible to enroll, and assigned to UEE Plans
+!********************************************************
+Begin-Procedure Process-Students
+Move 0 to #StudentCt
+Display 'Processing Students'
+
+Begin-Select DISTINCT 
+ct.EMPLID        
+EMS.EMAIL_ADDR
+FRS.FERPA
+BS.FIRST_NAME
+BS.LAST_NAME
+BS.MIDDLE_NAME
+replace(MS.ADDRESS1,',',' ')  &ADDRESS1_ST
+replace(MS.ADDRESS2,',',' ') &ADDRESS2_ST
+replace(MS.CITY,',',' ')   &CITY_ST
+replace(MS.STATE,',',' ')   &STATE_ST
+replace(MS.POSTAL,',',' ')   &POSTAL_ST
+to_char(BS.BIRTHDATE,'MM/DD/YYYY') &BIRTHDATE_ST
+EGS.ETHNIC_GRP_CD
+HMS.EMAIL_ADDR
+decode(BS.SEX, 'U', '', BS.SEX)  &GENDER_ST
+PHS.PHONE
+ROS.RESIDENCY
+
+	Let $Emplid 	= &CT.EMPLID
+	Let $StanMail	= &EMS.EMAIL_ADDR	
+	Let $Ferpa	= &FRS.FERPA
+	Let $FirstName	= &BS.FIRST_NAME
+	Let $Middle	= &BS.MIDDLE_NAME
+	Let $LastName	= &BS.LAST_NAME
+	Let $DOB	= &BIRTHDATE_ST 
+	Let $Gender	= &GENDER_ST
+	Let $Address1	= &ADDRESS1_ST
+	Let $Address2	= &ADDRESS2_ST
+	Let $City	= &CITY_ST
+	Let $State	= &STATE_ST
+	Let $Zip	= &POSTAL_ST
+	Let $Cell	= &PHS.PHONE
+
+	Let $HomeEmail	= &HMS.EMAIL_ADDR
+	Let $Ethnicity	= &EGS.ETHNIC_GRP_CD
+	Do Get-Citizenship
+	Do Get-AcadProg
+	Do Get-Student-Plan
+	Do Get-SubPlan
+	Do Get-AdmitDate
+	
+	If $Emplid <> ' '
+	Add 1 to #StudentCt
+	Do Write-Students
+	End-if
+
+from ps_stdnt_car_term ct                          
+JOIN PS_ACAD_PLAN PLN ON PLN.EMPLID = ct.EMPLID
+                        AND PLN.ACAD_CAREER = ct.ACAD_CAREER
+                        AND PLN.STDNT_CAR_NBR = ct.STDNT_CAR_NBR
+                         AND PLN.ACAD_PLAN IN ('CJ---BA-PB',
+                                              'HSCI-BS-PB',
+                                              'NURO-BS-PB',
+                                              'NURS-BS-PB',
+                                              'CJ---BA-UD',
+                                              'HSCI-BS-UD',
+                                              'NURO-BS-UD',
+                                              'SSCI-BA-UD',
+                                              'CHDV-MA-PD',
+                                              'SW---MW-PD',
+                                              'BUS--MB-PD',
+                                              'BUSO-MB-PD',
+                                              'SW---MW-PM',
+                                              'GNPM-CT-PO',
+                                              'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+                        AND PLN.EFFDT = (SELECT MAX(PLN2.EFFDT) FROM PS_ACAD_PLAN PLN2
+                                       WHERE PLN2.EMPLID = PLN.EMPLID
+                                       AND PLN2.ACAD_CAREER = PLN.ACAD_CAREER
+                                       AND PLN2.STDNT_CAR_NBR = PLN.STDNT_CAR_NBR
+                                     AND PLN2.ACAD_PLAN = PLN.ACAD_PLAN                                       
+                                     AND PLN2.EFFDT <= SYSDATE)
+                        AND PLN.EFFSEQ = (SELECT MAX(PLN3.EFFSEQ) FROM PS_ACAD_PLAN PLN3
+                                       WHERE PLN3.EMPLID = PLN.EMPLID
+                                       AND PLN3.ACAD_CAREER = PLN.ACAD_CAREER
+                                       AND PLN3.STDNT_CAR_NBR = PLN.STDNT_CAR_NBR
+                                       AND PLN3.ACAD_PLAN = PLN.ACAD_PLAN
+                                       AND PLN3.EFFDT = PLN.EFFDT)
+JOIN PS_PERS_DATA_SA_VW BS ON ct.EMPLID = BS.EMPLID                                       
+LEFT OUTER JOIN PS_EMAIL_ADDRESSES EMS ON ct.EMPLID = EMS.EMPLID
+  AND EMS.E_ADDR_TYPE = 'STAN'
+  LEFT OUTER JOIN PS_PERSON_SA FRS ON FRS.EMPLID = ct.EMPLID
+  LEFT OUTER JOIN PS_EMAIL_ADDRESSES HMS ON ct.EMPLID = HMS.EMPLID
+AND HMS.E_ADDR_TYPE = 'HOME'
+LEFT OUTER JOIN PS_ADDRESSES MS ON  MS.EMPLID = ct.EMPLID
+  AND MS.ADDRESS_TYPE = 'MAIL'
+  and mS.eff_status = 'A'
+  AND MS.EFFDT = (SELECT max(M1S.EFFDT) FROM PS_ADDRESSES M1S
+      WHERE M1S.EMPLID = MS.EMPLID
+      AND M1S.ADDRESS_TYPE = MS.ADDRESS_TYPE
+      AND M1S.EFFDT <= sysdate)
+LEFT OUTER JOIN PS_PERSONAL_PHONE PHS ON PHS.EMPLID = ct.EMPLID
+                AND PHS.PHONE_TYPE = 'CELL'
+LEFT OUTER JOIN PS_CSU_ETHNIC_HST EGS ON EGS.EMPLID = ct.EMPLID
+                 AND EGS.PRIMARY_INDICATOR = 'Y'
+                 AND EGS.EFFDT = (SELECT MAX(A1S.EFFDT)
+                              FROM sysadm.PS_CSU_ETHNIC_HST A1S
+                              WHERE EGS.EMPLID = A1S.EMPLID
+                              AND A1S.PRIMARY_INDICATOR = EGS.PRIMARY_INDICATOR
+                              AND A1S.EFFDT <= SYSDATE)                 
+LEFT OUTER JOIN PS_RESIDENCY_OFF ROS ON ROS.EMPLID = ct.EMPLID
+                        AND ROS.ACAD_CAREER <> 'EXED'
+                        and roS.residency_dt = (select max(r1S.residency_dt) from ps_residency_off r1S
+                        where r1S.emplid = roS.emplid
+                        and r1S.institution = 'STCMP'
+                        and r1S.residency_dt <= sysdate)                                          
+where ct.institution = 'STCMP'
+and ct.elig_to_enroll = 'Y'
+and ct.strm <= $STRM
+
+End-Select
+
+		Display 'StudentCt: ' noline
+		Display #StudentCt
+		Display '------------------'
+
+End-Procedure
+!********************************************************
+Begin-Procedure Get-AcadProg
+! correct effective dating for acad_prog
+Let $Career 	= ''
+Let $AcadProg	= ''
+Let $Status	= ''
+Let $AdmitTerm	= ''
+Let $ExpGradTrm	= ''
+Let $Effdt	= ''
+
+begin-select distinct
+pgs.emplid
+pgs.acad_career
+PGS.ACAD_PROG
+PGS.PROG_ACTION
+PGS.ADMIT_TERM
+PGS.EXP_GRAD_TERM
+TO_CHAR(PGS.EFFDT,'MM/DD/YYYY') &Eff_dt 
+
+	Let $Career 	= &pgs.acad_career
+	Let $AcadProg	= &pgs.acad_prog
+	Let $Status	= &pgs.prog_action
+	Let $AdmitTerm	= &pgs.admit_term
+	Let $ExpGradTrm	= &pgs.exp_grad_term
+	Let $Effdt	= &Eff_dt
+
+from ps_acad_prog PGS
+JOIN ps_acad_plan ap on ap.emplid = pgs.emplid
+                  and ap.acad_career = pgs.acad_career
+                  and ap.stdnt_car_nbr = pgs.stdnt_car_nbr
+                  and ap.acad_plan IN ('CJ---BA-PB',
+                                      'HSCI-BS-PB',
+                                      'NURO-BS-PB',
+                                      'NURS-BS-PB',
+                                      'CJ---BA-UD',
+                                      'HSCI-BS-UD',
+                                      'NURO-BS-UD',
+                                      'SSCI-BA-UD',
+                                      'CHDV-MA-PD',
+                                      'SW---MW-PD',
+                                      'BUS--MB-PD',
+                                      'BUSO-MB-PD',
+                                      'SW---MW-PM',
+                                      'GNPM-CT-PO',
+                                      'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+where pgs.emplid = $Emplid
+and pgs.acad_career <> 'EXED'
+and pgs.admit_term <= $STRM
+and PGS.EFFDT = (SELECT MAX(D_EDS.EFFDT)
+                    FROM sysadm.PS_ACAD_PROG D_EDS
+                   WHERE PGS.EMPLID = D_EDS.EMPLID
+                   and pgs.acad_prog = d_eds.acad_prog
+                   AND PGS.STDNT_CAR_NBR = D_EDS.STDNT_CAR_NBR
+		   AND D_EDS.ADMIT_TERM = PGS.ADMIT_TERM)
+AND PGS.EFFSEQ = (SELECT MAX(D_ESS.EFFSEQ)
+                     FROM sysadm.PS_ACAD_PROG D_ESS
+                    WHERE PGS.EMPLID = D_ESS.EMPLID
+                      !AND PGS.ACAD_CAREER = D_ESS.ACAD_CAREER
+                      AND PGS.STDNT_CAR_NBR = D_ESS.STDNT_CAR_NBR
+                      AND PGS.EFFDT = D_ESS.EFFDT)      
+End-Select
+
+End-Procedure
+
+!********************************************************
+Begin-Procedure Get-Student-Plan
+Let $Plan = ''
+
+begin-select distinct
+pl.acad_plan
+
+	Let $Plan = &pl.acad_plan
+
+from ps_acad_plan pl
+where pl.emplid = $Emplid
+and pl.acad_career = $Career
+and pl.effdt = (select max(b.effdt) from ps_acad_plan b
+            where b.emplid = pl.emplid
+            and b.acad_career = pl.acad_career
+            and b.acad_plan IN ('CJ---BA-PB',
+                                'HSCI-BS-PB',
+                                'NURO-BS-PB',
+                                'NURS-BS-PB',
+                                'CJ---BA-UD',
+                                'HSCI-BS-UD',
+                                'NURO-BS-UD',
+                                'SSCI-BA-UD',
+                                'CHDV-MA-PD',
+                                'SW---MW-PD',
+                                'BUS--MB-PD',
+                                'BUSO-MB-PD',
+                                'SW---MW-PM',
+                                'GNPM-CT-PO',
+                                'LEAD-BS-UD') !03/29/2024 KBrown, Added LEAD-BS-UD
+            and b.effdt <= sysdate)
+and pl.effseq = (select max(c.effseq) from ps_acad_plan c
+            where c.emplid = pl.emplid
+            and c.acad_career = pl.acad_career
+            and c.acad_plan = pl.acad_plan
+            and c.effdt = pl.effdt)
+
+end-select
+
+End-Procedure
+!***************************************************
+Begin-Procedure Get-SubPlan
+Let $SubPlan = ''
+
+begin-select distinct
+sb.acad_sub_plan
+
+	Let $SubPlan = &sb.acad_sub_plan
+
+from ps_acad_subplan sb
+where sb.emplid = $Emplid
+and sb.acad_plan = $Plan
+and sb.acad_career = $Career
+and sb.effdt = (select max(b.effdt) from ps_acad_subplan b
+            where b.emplid = sb.emplid
+            and b.acad_career = sb.acad_career
+            and b.effdt <= sysdate)
+and sb.effseq = (select max(c.effseq) from ps_acad_plan c
+            where c.emplid = sb.emplid
+            and c.acad_career = sb.acad_career
+            and c.effdt = sb.effdt)
+End-Select
+End-Procedure
+
+
+!************************************************************
+Begin-Procedure Write-Students-Header
+
+Write 4 from
+
+'PSID'
+$Delimiter
+'StanMail'
+$Delimiter
+'FERPA'
+$Delimiter
+'FirstName'
+$Delimiter
+'LastName'
+$Delimiter
+'MiddleName'
+$Delimiter
+'AddressLine1'
+$Delimiter
+'AddressLine2'
+$Delimiter
+'City'
+$Delimiter
+'State'
+$Delimiter
+'Zip'
+$Delimiter
+'DOB'
+$Delimiter
+'Ethnicity'
+$Delimiter
+'Mobile'
+$Delimiter
+'HomeEmail'
+$Delimiter
+'Gender'
+$Delimiter
+'AdmitTerm'
+$Delimiter
+'Residency'
+$Delimiter
+'Citizenship'
+$Delimiter
+'Status'
+$Delimiter
+'AcadProg'
+$Delimiter
+'AcadPlan'
+$Delimiter
+'SubPlan'
+$Delimiter
+'AdmitDt'
+$Delimiter
+'Expected Grad Term'
+$Delimiter
+'Effective Date'
+
+End-Procedure
+!************************************
+
+!******************************************************
+Begin-Procedure Write-Students
+
+Write 4 from 
+
+$Emplid
+$Delimiter
+$StanMail
+$Delimiter
+$FERPA
+$Delimiter
+$FirstName
+$Delimiter
+$LastName
+$Delimiter
+$Middle	
+$Delimiter
+$Address1
+$Delimiter
+$Address2
+$Delimiter
+$City
+$Delimiter
+$State
+$Delimiter
+$Zip
+$Delimiter
+$DOB
+$Delimiter
+$Ethnicity
+$Delimiter
+$Cell
+$Delimiter
+$HomeEmail
+$Delimiter
+$Gender
+$Delimiter
+$AdmitTerm
+$Delimiter
+$Residency
+$Delimiter
+$Citizenship
+$Delimiter
+$Status
+$Delimiter
+$AcadProg
+$Delimiter
+$Plan
+$Delimiter
+$SubPlan
+$Delimiter
+$AdmitDt
+$Delimiter
+$ExpGradTrm
+$Delimiter
+$Effdt
+
+End-Procedure
+!************************************************************************************
+!INTERNATIONAL STUDENTS
+!**************************************************************************************
+Begin-Procedure Process-International-Students
+Move 0 to #IntlStudentCt
+
+Begin-Select DISTINCT 
+iPG.EMPLID        
+iEM.EMAIL_ADDR
+ifr.FERPA
+iB.FIRST_NAME
+iB.LAST_NAME
+iB.MIDDLE_NAME
+replace(iM.ADDRESS1,',',' ')  &iADDRESS1
+replace(iM.ADDRESS2,',',' ')  &iADDRESS2
+replace(iM.CITY,',',' ')      &iCITY
+replace(iM.STATE,',',' ')     &iSTATE
+replace(iM.POSTAL,',',' ')    &iPOSTAL
+to_char(iB.BIRTHDATE,'MM/DD/YYYY') &iBIRTHDATE
+iEG.ETHNIC_GRP_CD
+iHM.EMAIL_ADDR
+decode(iB.SEX, 'U', '', iB.SEX)  &iGENDER
+iPH.PHONE
+iRO.RESIDENCY		&iRESIDENCY
+VIS.STDNT_GROUP		&IntlType
+
+	Let $Emplid 	= &iPG.EMPLID
+	Let $StanMail	= &iEM.EMAIL_ADDR
+	Let $Ferpa	= &iFR.FERPA
+	Let $FirstName	= &iB.FIRST_NAME
+	Let $Middle	= &iB.MIDDLE_NAME
+	Let $LastName	= &iB.LAST_NAME
+	Let $DOB	= &iBIRTHDATE 
+	Let $Gender	= &iGENDER
+	Let $Address1	= &iADDRESS1
+	Let $Address2	= &iADDRESS2
+	Let $City	= &iCITY
+	Let $State	= &iSTATE
+	Let $Zip	= &iPOSTAL
+	Let $Cell	= &iPH.PHONE
+	Let $HomeEmail	= &iHM.EMAIL_ADDR
+	Let $Ethnicity	= &iEG.ETHNIC_GRP_CD
+	Let $IntlType	= &IntlType
+	
+	Evaluate $IntlType
+	When = 'INTF'
+	Let $IntlType = 'F1'
+	Break	
+	When = 'INTJ'
+	Let $IntlType = 'J1'
+	Break
+	When = 'SA'
+	Let $IntlType = 'SA'
+	End-Evaluate
+	
+		
+	Do Get-Term-Descr
+	Let $AdmitTermDescr = $TermDescr||' '||$TermYear
+	Let $Residency = &iRESIDENCY
+	
+	Do Get-Citizenship
+	Do Get-AcadProg-Intl
+		Let $Career 	= &ipgs.acad_career
+		Let $AcadProg	= &ipgs.acad_prog
+		Let $Status	= &ipgs.prog_action
+		Let $AdmitTerm	= &ipgs.admit_term
+		Let $ExpGradTrm	= &ipgs.exp_grad_term
+		Let $Effdt	= &iEff_dt
+ 	Do Get-AdmAppData
+	Do Get-Student-Plan-Intl
+	Do Get-SubPlan
+	Do Get-AdmitDate
+			
+	Add 1 to #IntlStudentCt
+	Do Write-International-Students
+
+FROM PS_STDNT_CAR_TERM iPG 
+join ps_stdnt_grps_hist vis on vis.emplid = iPG.emplid 
+			   and vis.stdnt_group IN ('INTF', 'INTJ')
+			   AND vis.eff_status = 'A'
+			   and vis.effdt = (select max(vis2.effdt) from ps_stdnt_grps_hist vis2
+                                                       where vis2.emplid = vis.emplid
+                                                      and vis2.stdnt_group = vis.stdnt_group
+                                                       and vis2.effdt <= sysdate)
+JOIN PS_PERS_DATA_SA_VW iB ON iPG.EMPLID = iB.EMPLID
+LEFT OUTER JOIN PS_PERSON_SA iFR ON iFR.EMPLID = iPG.EMPLID
+LEFT OUTER JOIN PS_EMAIL_ADDRESSES iEM ON iPG.EMPLID = iEM.EMPLID
+  AND iEM.E_ADDR_TYPE = 'STAN'
+LEFT OUTER JOIN PS_EMAIL_ADDRESSES iHM ON iPG.EMPLID = iHM.EMPLID
+AND iHM.E_ADDR_TYPE = 'HOME'
+LEFT OUTER JOIN PS_ADDRESSES iM ON  iM.EMPLID = iPG.EMPLID
+  AND iM.ADDRESS_TYPE = 'MAIL'
+  and im.eff_status = 'A'
+  AND iM.EFFDT = (SELECT max(iM1.EFFDT) FROM PS_ADDRESSES iM1
+      WHERE iM1.EMPLID = iM.EMPLID
+      AND iM1.ADDRESS_TYPE = iM.ADDRESS_TYPE
+      AND iM1.EFFDT <= sysdate)
+LEFT OUTER JOIN PS_PERSONAL_PHONE iPH ON iPH.EMPLID = iPG.EMPLID
+                AND iPH.PHONE_TYPE = 'CELL'
+LEFT OUTER JOIN PS_CSU_ETHNIC_HST iEG ON iEG.EMPLID = iPG.EMPLID
+                 AND iEG.PRIMARY_INDICATOR = 'Y'
+                 AND iEG.EFFDT = (SELECT MAX(iA1.EFFDT)
+                              FROM sysadm.PS_CSU_ETHNIC_HST iA1
+                              WHERE iEG.EMPLID = iA1.EMPLID
+                              AND iA1.PRIMARY_INDICATOR = iEG.PRIMARY_INDICATOR
+                              AND iA1.EFFDT <= SYSDATE)                 
+LEFT OUTER JOIN PS_RESIDENCY_OFF iRO ON iRO.EMPLID = iPG.EMPLID
+                        and iro.residency_dt = (select max(ir1.residency_dt) from ps_residency_off ir1
+                        where ir1.emplid = iro.emplid
+                        and ir1.acad_career = iro.acad_career
+                        and ir1.institution = 'STCMP'
+                        and ir1.residency_dt <= sysdate)
+where iPG.institution = 'STCMP'
+and iPG.elig_to_enroll = 'Y'
+and iPG.strm <= $STRM
+
+union
+
+Select DISTINCT 
+isPG.EMPLID,        
+isEM.EMAIL_ADDR,
+isfr.FERPA,
+isB.FIRST_NAME,
+isB.LAST_NAME,
+isB.MIDDLE_NAME,
+replace(isM.ADDRESS1,',',' '),  
+replace(isM.ADDRESS2,',',' '), 
+replace(isM.CITY,',',' '),     
+replace(isM.STATE,',',' '),    
+replace(isM.POSTAL,',',' '),   
+to_char(isB.BIRTHDATE,'MM/DD/YYYY'),
+isEG.ETHNIC_GRP_CD,
+isHM.EMAIL_ADDR,
+decode(isB.SEX, 'U', '', isB.SEX), 
+isPH.PHONE,
+isRO.RESIDENCY,
+isb.srvc_ind_reason
+
+FROM PS_STDNT_CAR_TERM isPG 
+join ps_srvc_ind_data isb on isb.emplid = isPG.emplid 
+			  and  isb.srvc_ind_cd = 'INT'
+ 			and isb.srvc_ind_reason = 'SA' 
+ 			and isb.srvc_ind_act_term = (select max(isb2.srvc_ind_act_term)
+                            from ps_srvc_ind_data isb2
+                            where isb2.emplid = isb.emplid
+                            and isb2.srvc_ind_cd = isb.srvc_ind_cd
+                            and isb2.srvc_ind_reason = isb.srvc_ind_reason)                 
+JOIN PS_PERS_DATA_SA_VW isB ON isPG.EMPLID = isB.EMPLID
+LEFT OUTER JOIN PS_PERSON_SA isFR ON isFR.EMPLID = isPG.EMPLID
+LEFT OUTER JOIN PS_EMAIL_ADDRESSES isEM ON isPG.EMPLID = isEM.EMPLID
+  AND isEM.E_ADDR_TYPE = 'STAN'
+LEFT OUTER JOIN PS_EMAIL_ADDRESSES isHM ON isPG.EMPLID = isHM.EMPLID
+AND isHM.E_ADDR_TYPE = 'HOME'
+LEFT OUTER JOIN PS_ADDRESSES isM ON  isM.EMPLID = isPG.EMPLID
+  AND isM.ADDRESS_TYPE = 'MAIL'
+  and ism.eff_status = 'A'
+  AND isM.EFFDT = (SELECT max(isM1.EFFDT) FROM PS_ADDRESSES isM1
+      WHERE isM1.EMPLID = isM.EMPLID
+      AND isM1.ADDRESS_TYPE = isM.ADDRESS_TYPE
+      AND isM1.EFFDT <= sysdate)
+LEFT OUTER JOIN PS_PERSONAL_PHONE isPH ON isPH.EMPLID = isPG.EMPLID
+                AND isPH.PHONE_TYPE = 'CELL'
+LEFT OUTER JOIN PS_CSU_ETHNIC_HST isEG ON isEG.EMPLID = isPG.EMPLID
+                 AND isEG.PRIMARY_INDICATOR = 'Y'
+                 AND isEG.EFFDT = (SELECT MAX(isA1.EFFDT)
+                              FROM sysadm.PS_CSU_ETHNIC_HST isA1
+                              WHERE isEG.EMPLID = isA1.EMPLID
+                              AND isA1.PRIMARY_INDICATOR = isEG.PRIMARY_INDICATOR
+                              AND isA1.EFFDT <= SYSDATE)                 
+LEFT OUTER JOIN PS_RESIDENCY_OFF isRO ON isRO.EMPLID = isPG.EMPLID
+                        and isro.residency_dt = (select max(isr1.residency_dt) from ps_residency_off isr1
+                        where isr1.emplid = isro.emplid
+                        and isr1.acad_career = isro.acad_career
+                        and isr1.institution = 'STCMP'
+                        and isr1.residency_dt <= sysdate) 
+                        and isro.effective_term = (select max(ro2.effective_term) from ps_residency_off ro2
+			              where ro2.emplid = isro.emplid
+			              and ro2.acad_career = isro.acad_career
+			              and ro2.institution = 'STCMP'
+                                      and ro2.effective_term <= $STRM)
+where isPG.institution = 'STCMP'
+and isPG.elig_to_enroll = 'Y'
+and isPG.strm <= $STRM   
+
+End-Select
+
+		Display '#IntlStudentCt: ' noline
+		Display #IntlStudentCt
+		Display '----------------------'
+
+
+End-Procedure
+
+!*************************************************************
+Begin-Procedure Get-AcadProg-Intl
+Let $Career 	= ''
+Let $AcadProg	= ''
+Let $Status	= ''
+Let $AdmitTerm	= ''
+Let $ExpGradTrm	= ''
+Let $Effdt	= ''
+
+begin-select distinct
+ipgs.emplid
+ipgs.acad_career
+iPGS.ACAD_PROG
+iPGS.PROG_ACTION
+iPGS.ADMIT_TERM
+iPGS.EXP_GRAD_TERM
+iPGS.ADM_APPL_NBR
+TO_CHAR(iPGS.EFFDT,'MM/DD/YYYY') &iEff_dt 
+
+	Let $Career 	= &ipgs.acad_career
+	Let $AcadProg	= &ipgs.acad_prog
+	Let $Status	= &ipgs.prog_action
+	Let $AdmitTerm	= &ipgs.admit_term
+	Let $ExpGradTrm	= &ipgs.exp_grad_term
+	Let $AdmApplNbr	= &iPGS.ADM_APPL_NBR
+	Let $Effdt	= &iEff_dt
+
+from ps_acad_prog iPGS
+where ipgs.emplid = $Emplid
+and ipgs.acad_career <> 'EXED'
+and ipgs.admit_term <= $STRM
+and iPGS.EFFDT = (SELECT MAX(iD_EDS.EFFDT)
+                    FROM sysadm.PS_ACAD_PROG iD_EDS
+                   WHERE iPGS.EMPLID = iD_EDS.EMPLID
+                   AND iPGS.STDNT_CAR_NBR = iD_EDS.STDNT_CAR_NBR
+		   AND iD_EDS.ADMIT_TERM = iPGS.ADMIT_TERM)
+AND iPGS.EFFSEQ = (SELECT MAX(iD_ESS.EFFSEQ)
+                     FROM sysadm.PS_ACAD_PROG iD_ESS
+                    WHERE iPGS.EMPLID = iD_ESS.EMPLID
+                      AND iPGS.ACAD_CAREER = iD_ESS.ACAD_CAREER
+                      AND iPGS.STDNT_CAR_NBR = iD_ESS.STDNT_CAR_NBR
+                      AND iPGS.EFFDT = iD_ESS.EFFDT)      
+End-Select
+
+End-Procedure
+
+!**********************************************************
+Begin-Procedure Get-Student-Plan-Intl
+Let $Plan = ''
+
+begin-select distinct
+
+ipl.acad_plan
+
+	Let $Plan = &ipl.acad_plan
+
+from ps_acad_plan ipl
+where ipl.emplid = $Emplid
+and ipl.acad_career = $Career
+and ipl.effdt = (select max(ib.effdt) from ps_acad_plan ib
+            where ib.emplid = ipl.emplid
+            and ib.acad_career = ipl.acad_career
+            and ib.effdt <= sysdate)
+and ipl.effseq = (select max(ic.effseq) from ps_acad_plan ic
+            where ic.emplid = ipl.emplid
+            and ic.acad_career = ipl.acad_career
+            and ic.effdt = ipl.effdt)
+
+end-select
+
+End-Procedure
+
+!************************************************************************************
+!INTERNATIONAL APPLICANTS
+!**************************************************************************************
+Begin-Procedure Process-International-Applicants
+Display 'Processing Intl Applicants'
+Move 0 to #IntlApplicants
+
+Begin-Select DISTINCT 
+iSA.EMPLID				
+EMsa.EMAIL_ADDR
+frsa.FERPA
+Bsa.FIRST_NAME
+Bsa.LAST_NAME
+Bsa.MIDDLE_NAME
+replace(Msa.ADDRESS1,',',' ')  &gADDRESS1
+replace(Msa.ADDRESS2,',',' ')  &gADDRESS2
+replace(Msa.CITY,',',' ')      &gCITY
+replace(Msa.STATE,',',' ')     &gSTATE
+replace(Msa.POSTAL,',',' ')    &gPOSTAL
+to_char(Bsa.BIRTHDATE,'MM/DD/YYYY') &gBIRTHDATE
+EGsa.ETHNIC_GRP_CD
+HMsa.EMAIL_ADDR
+decode(Bsa.SEX, 'U', '', Bsa.SEX)  &gGENDER
+PHsa.PHONE
+ROsa.RESIDENCY			&gRESIDENCY
+iSA.acad_career
+iSA.ACAD_PROG
+iSA.PROG_ACTION
+iSA.PROG_REASON
+iSA.ADM_APPL_NBR
+plsa.acad_plan			&gACAD_PLAN
+iSA.ADMIT_TERM
+iSA.EXP_GRAD_TERM
+to_char(iSA.ACTION_DT,'MM/DD/YYYY') 	&gActionDt
+TO_CHAR(iSA.EFFDT,'MM/DD/YYYY') 	&gEffdt 
+to_char(iSA.SCC_ROW_UPD_DTTM,'MM/DD/YYYY') &gLastUPdate
+svd.srvc_ind_reason		&sIntlType
+
+
+	Let $Emplid 	= &iSA.EMPLID
+	Let $StanMail	= &EMsa.EMAIL_ADDR
+	Let $Ferpa	= &frsa.FERPA
+	Let $FirstName	= &Bsa.FIRST_NAME
+	Let $Middle	= &Bsa.MIDDLE_NAME
+	Let $LastName	= &Bsa.LAST_NAME
+	Let $DOB	= &gBIRTHDATE
+	Let $Gender	= &gGENDER
+	Let $Address1	= &gADDRESS1
+	Let $Address2	= &gADDRESS2
+	Let $City	= &gCITY
+	Let $State	= &gSTATE
+	Let $Zip	= &gPOSTAL
+	Let $Cell	= &PHsa.PHONE
+	Let $HomeEmail	= &HMsa.EMAIL_ADDR
+	Let $Ethnicity	= &EGsa.ETHNIC_GRP_CD
+	Let $Status	= &iSA.PROG_ACTION
+	Let $Career	= &iSA.acad_career
+	Let $AcadProg 	= &iSA.ACAD_PROG
+	Let $AdmitTerm	= &iSA.admit_term
+	Let $ExpGradTerm = &iSA.exp_grad_term
+	Let $Effdt	= &gEffdt
+	Let $AdmApplNbr	= &iSA.ADM_APPL_NBR
+	Let $IntlType	= &sIntlType
+		
+	Evaluate $IntlType
+	When = 'INTF'
+	Let $IntlType = 'F1'
+	Break	
+	When = 'INTJ'
+	Let $IntlType = 'J1'
+	Break
+	When = 'SA'
+	Let $IntlType = 'SA'
+	End-Evaluate
+	
+
+	Do Get-Citizenship
+	Do Get-AdmAppData
+	Do Get-AppDate
+	Do Get-Student-Plan-Intl
+	Do Get-SubPlan
+	Do Get-AdmitDate
+	
+		
+	If $ExpGradTerm = ' '
+	   Do Check-AcadProg
+	   !Let $ExpGradTrm = $ExpGradTerm
+	End-if
+
+	Do Write-International-Contacts
+	Add 1 to #IntlApplicants
+
+FROM PS_ADM_APPL_PROG iSA
+join ps_srvc_ind_data svd on svd.emplid = iSA.emplid 
+			  and  svd.srvc_ind_cd = 'INT'
+ 			and svd.srvc_ind_reason = 'SA' 
+ 			and svd.srvc_ind_act_term = (select max(sa2.srvc_ind_act_term)
+                            from ps_srvc_ind_data sa2
+                            where sa2.emplid = svd.emplid
+                            and sa2.srvc_ind_cd = svd.srvc_ind_cd
+                            and sa2.srvc_ind_reason = svd.srvc_ind_reason)     
+JOIN PS_ADM_APPL_PLAN PLsa ON PLsa.EMPLID = iSA.EMPLID
+                        AND PLsa.ACAD_CAREER = iSA.ACAD_CAREER
+                        AND PLsa.STDNT_CAR_NBR = iSA.STDNT_CAR_NBR
+                        AND PLsa.ADM_APPL_NBR = iSA.ADM_APPL_NBR
+                        AND PLsa.APPL_PROG_NBR = iSA.APPL_PROG_NBR
+                        AND PLsa.EFFDT = (SELECT MAX(PL2s.EFFDT) FROM PS_ADM_APPL_PLAN PL2s
+                                       WHERE PL2s.EMPLID = PLsa.EMPLID
+                                       AND PL2s.ACAD_CAREER = PLsa.ACAD_CAREER
+                                       AND PL2s.STDNT_CAR_NBR = PLsa.STDNT_CAR_NBR
+                                       AND PL2s.ADM_APPL_NBR = PLsa.ADM_APPL_NBR
+                                       AND PL2s.APPL_PROG_NBR = PLsa.APPL_PROG_NBR
+                                       AND PL2s.EFFDT <= SYSDATE)
+                        AND PLsa.EFFSEQ = (SELECT MAX(PL3s.EFFSEQ) FROM PS_ADM_APPL_PLAN PL3s
+                                       WHERE PL3s.EMPLID = PLsa.EMPLID
+                                       AND PL3s.ACAD_CAREER = PLsa.ACAD_CAREER
+                                       AND PL3s.STDNT_CAR_NBR = PLsa.STDNT_CAR_NBR
+                                       AND PL3s.ADM_APPL_NBR = PLsa.ADM_APPL_NBR
+                                       AND PL3s.APPL_PROG_NBR = PLsa.APPL_PROG_NBR
+                                       AND PL3s.EFFDT = PLsa.EFFDT)    
+LEFT OUTER JOIN PS_PERSON_SA FRsa ON FRsa.EMPLID = iSA.EMPLID
+JOIN PS_PERS_DATA_SA_VW Bsa ON iSA.EMPLID = Bsa.EMPLID
+JOIN PS_EMAIL_ADDRESSES EMsa ON iSA.EMPLID = EMsa.EMPLID
+  AND EMsa.E_ADDR_TYPE = 'STAN'
+LEFT OUTER JOIN PS_EMAIL_ADDRESSES HMsa ON iSA.EMPLID = HMsa.EMPLID
+AND HMsa.E_ADDR_TYPE = 'HOME'
+LEFT OUTER JOIN PS_ADDRESSES Msa ON  Msa.EMPLID = iSA.EMPLID
+  AND Msa.ADDRESS_TYPE = 'MAIL'
+  and msa.eff_status = 'A'
+  AND Msa.EFFDT = (SELECT max(M1s.EFFDT) FROM PS_ADDRESSES M1s
+      WHERE M1s.EMPLID = Msa.EMPLID
+      AND M1s.ADDRESS_TYPE = Msa.ADDRESS_TYPE
+      AND M1s.EFFDT <= sysdate)
+LEFT OUTER JOIN PS_PERSONAL_PHONE PHsa ON PHsa.EMPLID = iSA.EMPLID
+                AND PHsa.PHONE_TYPE = 'CELL'
+LEFT OUTER JOIN PS_CSU_ETHNIC_HST EGsa ON EGsa.EMPLID = iSA.EMPLID
+                 AND EGsa.PRIMARY_INDICATOR = 'Y'
+                 AND EGsa.EFFDT = (SELECT MAX(A1s.EFFDT)
+                              FROM sysadm.PS_CSU_ETHNIC_HST A1s
+                              WHERE EGsa.EMPLID = A1s.EMPLID
+                              AND A1s.PRIMARY_INDICATOR = EGsa.PRIMARY_INDICATOR
+                              AND A1s.EFFDT <= SYSDATE)                 
+LEFT OUTER JOIN PS_RESIDENCY_OFF ROsa ON ROsa.EMPLID = iSA.EMPLID
+                        and rosa.residency_dt = (select max(r1s.residency_dt) from ps_residency_off r1s
+                        where r1s.emplid = rosa.emplid
+                        and r1s.acad_career = rosa.acad_career
+                        and r1s.institution = 'STCMP'
+                        and r1s.residency_dt <= sysdate)
+WHERE iSA.ADMIT_TERM = $STRM
+AND iSA.EFFDT = (SELECT MAX(D_EDs.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_EDs
+                   WHERE iSA.EMPLID = D_EDs.EMPLID
+                     AND iSA.ACAD_CAREER = D_EDs.ACAD_CAREER
+                     AND iSA.STDNT_CAR_NBR = D_EDs.STDNT_CAR_NBR
+                     AND iSA.ADM_APPL_NBR = D_EDs.ADM_APPL_NBR
+                     AND iSA.APPL_PROG_NBR = D_EDs.APPL_PROG_NBR
+                     AND D_EDs.EFFDT <= SYSDATE)
+AND iSA.EFFSEQ = (SELECT MAX(D_ESs.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_ESs
+                    WHERE iSA.EMPLID = D_ESs.EMPLID
+                      AND iSA.ACAD_CAREER = D_ESs.ACAD_CAREER
+                      AND iSA.STDNT_CAR_NBR = D_ESs.STDNT_CAR_NBR
+                      AND iSA.ADM_APPL_NBR = D_ESs.ADM_APPL_NBR
+                      AND iSA.APPL_PROG_NBR = D_ESs.APPL_PROG_NBR
+                      AND iSA.EFFDT = D_ESs.EFFDT)
+union
+                    
+SELECT DISTINCT 
+iVT.EMPLID,        
+EMsg.EMAIL_ADDR,
+frsg.FERPA,
+Bsg.FIRST_NAME,
+Bsg.LAST_NAME,
+Bsg.MIDDLE_NAME,
+replace(Msg.ADDRESS1,',',' '),
+replace(Msg.ADDRESS2,',',' '),
+replace(Msg.CITY,',',' '),
+replace(Msg.STATE,',',' '),
+replace(Msg.POSTAL,',',' '),
+to_char(Bsg.BIRTHDATE,'MM/DD/YYYY'),
+EGsg.ETHNIC_GRP_CD,
+HMsg.EMAIL_ADDR,
+decode(Bsg.SEX, 'U', '', Bsg.SEX),
+PHsg.PHONE,
+ROsg.RESIDENCY,
+iVT.acad_career,
+iVT.ACAD_PROG,
+iVT.PROG_ACTION,
+iVT.PROG_REASON,
+iVT.ADM_APPL_NBR,
+plsg.acad_plan,
+iVT.ADMIT_TERM,
+iVT.EXP_GRAD_TERM,
+to_char(iVT.ACTION_DT,'MM/DD/YYYY'),
+TO_CHAR(iVT.EFFDT,'MM/DD/YYYY'), 
+to_char(iVT.SCC_ROW_UPD_DTTM,'MM/DD/YYYY'),
+vsg.stdnt_group
+
+FROM PS_ADM_APPL_PROG iVT 
+join ps_stdnt_grps_hist vsg on vsg.emplid = iVT.emplid 
+			   and vsg.stdnt_group IN ('INTF', 'INTJ')
+			   AND vsg.eff_status = 'A'
+			   and vsg.effdt = (select max(vsg2.effdt) from ps_stdnt_grps_hist vsg2
+                                                       where vsg2.emplid = vsg.emplid
+                                                      and vsg2.stdnt_group = vsg.stdnt_group
+                                                       and vsg2.effdt <= sysdate)    
+JOIN PS_ADM_APPL_PLAN PLsg ON PLsg.EMPLID = iVT.EMPLID
+                        AND PLsg.ACAD_CAREER = iVT.ACAD_CAREER
+                        AND PLsg.STDNT_CAR_NBR = iVT.STDNT_CAR_NBR
+                        AND PLsg.ADM_APPL_NBR = iVT.ADM_APPL_NBR
+                        AND PLsg.APPL_PROG_NBR = iVT.APPL_PROG_NBR
+                        AND PLsg.EFFDT = (SELECT MAX(PL2g.EFFDT) FROM PS_ADM_APPL_PLAN PL2g
+                                       WHERE PL2g.EMPLID = PLsg.EMPLID
+                                       AND PL2g.ACAD_CAREER = PLsg.ACAD_CAREER
+                                       AND PL2g.STDNT_CAR_NBR = PLsg.STDNT_CAR_NBR
+                                       AND PL2g.ADM_APPL_NBR = PLsg.ADM_APPL_NBR
+                                       AND PL2g.APPL_PROG_NBR = PLsg.APPL_PROG_NBR
+                                       AND PL2g.EFFDT <= SYSDATE)
+                        AND PLsg.EFFSEQ = (SELECT MAX(PL3g.EFFSEQ) FROM PS_ADM_APPL_PLAN PL3g
+                                       WHERE PL3g.EMPLID = PLsg.EMPLID
+                                       AND PL3g.ACAD_CAREER = PLsg.ACAD_CAREER
+                                       AND PL3g.STDNT_CAR_NBR = PLsg.STDNT_CAR_NBR
+                                       AND PL3g.ADM_APPL_NBR = PLsg.ADM_APPL_NBR
+                                       AND PL3g.APPL_PROG_NBR = PLsg.APPL_PROG_NBR
+                                       AND PL3g.EFFDT = PLsg.EFFDT)    
+LEFT OUTER JOIN PS_PERSON_SA FRsg ON FRsg.EMPLID = iVT.EMPLID
+JOIN PS_PERS_DATA_SA_VW Bsg ON iVT.EMPLID = Bsg.EMPLID
+JOIN PS_EMAIL_ADDRESSES EMsg ON iVT.EMPLID = EMsg.EMPLID
+  AND EMsg.E_ADDR_TYPE = 'STAN'
+LEFT OUTER JOIN PS_EMAIL_ADDRESSES HMsg ON iVT.EMPLID = HMsg.EMPLID
+AND HMsg.E_ADDR_TYPE = 'HOME'
+LEFT OUTER JOIN PS_ADDRESSES Msg ON  Msg.EMPLID = iVT.EMPLID
+  AND Msg.ADDRESS_TYPE = 'MAIL'
+  and msg.eff_status = 'A'
+  AND Msg.EFFDT = (SELECT max(M1g.EFFDT) FROM PS_ADDRESSES M1g
+      WHERE M1g.EMPLID = Msg.EMPLID
+      AND M1g.ADDRESS_TYPE = Msg.ADDRESS_TYPE
+      AND M1g.EFFDT <= sysdate)
+LEFT OUTER JOIN PS_PERSONAL_PHONE PHsg ON PHsg.EMPLID = iVT.EMPLID
+                AND PHsg.PHONE_TYPE = 'CELL'
+LEFT OUTER JOIN PS_CSU_ETHNIC_HST EGsg ON EGsg.EMPLID = iVT.EMPLID
+                 AND EGsg.PRIMARY_INDICATOR = 'Y'
+                 AND EGsg.EFFDT = (SELECT MAX(A1g.EFFDT)
+                              FROM sysadm.PS_CSU_ETHNIC_HST A1g
+                              WHERE EGsg.EMPLID = A1g.EMPLID
+                              AND A1g.PRIMARY_INDICATOR = EGsg.PRIMARY_INDICATOR
+                              AND A1g.EFFDT <= SYSDATE)                 
+LEFT OUTER JOIN PS_RESIDENCY_OFF ROsg ON ROsg.EMPLID = iVT.EMPLID
+                        and rosg.residency_dt = (select max(r1g.residency_dt) from ps_residency_off r1g
+                        where r1g.emplid = rosg.emplid
+                        and r1g.acad_career = rosg.acad_career
+                        and r1g.institution = 'STCMP'
+                        and r1g.residency_dt <= sysdate)
+WHERE iVT.ADMIT_TERM = $STRM
+AND iVT.EFFDT = (SELECT MAX(D_EDg.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_EDg
+                   WHERE iVT.EMPLID = D_EDg.EMPLID
+                     AND iVT.ACAD_CAREER = D_EDg.ACAD_CAREER
+                     AND iVT.STDNT_CAR_NBR = D_EDg.STDNT_CAR_NBR
+                     AND iVT.ADM_APPL_NBR = D_EDg.ADM_APPL_NBR
+                     AND iVT.APPL_PROG_NBR = D_EDg.APPL_PROG_NBR
+                     AND D_EDg.EFFDT <= SYSDATE)
+AND iVT.EFFSEQ = (SELECT MAX(D_ESg.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_ESg
+                    WHERE iVT.EMPLID = D_ESg.EMPLID
+                      AND iVT.ACAD_CAREER = D_ESg.ACAD_CAREER
+                      AND iVT.STDNT_CAR_NBR = D_ESg.STDNT_CAR_NBR
+                      AND iVT.ADM_APPL_NBR = D_ESg.ADM_APPL_NBR
+                      AND iVT.APPL_PROG_NBR = D_ESg.APPL_PROG_NBR
+                      AND iVT.EFFDT = D_ESg.EFFDT)
+End-Select                    
+
+		Display 'IntlApplicants: ' noline
+		Display #IntlApplicants
+		Display '----------------------'
+
+End-Procedure
+!*********************************************************************
+! International TestScores
+!*********************************************************************************
+Begin-Procedure Process-Intl-TestScores
+Display 'Processing Intl TestScores'
+
+Move 0 to #IntlTestScoreCt
+
+Begin-Select distinct
+iTS.emplid
+
+	Let $Emplid = &iTS.emplid
+
+  	do Get-SAT-MSS
+  	If $TestScore <> ''
+  	  
+  	  Let $TestComp = 'MATH'
+  	  Do Write-IntlTestScores
+  	Else
+
+	   do Get-SAT-MATH
+	   If $TestScore <> ''
+	   Do Write-IntlTestScores
+	   End-if
+	End-if
+	
+	do Get-SAT-ERWS
+	If $TestScore <> ''
+	   Do Write-IntlTestScores
+	Else
+	  do Get-SAT-VERB
+	  If $TestScore <> ''
+	  Do Write-IntlTestScores
+	  End-if
+	End-if
+	
+	do Get-SAT-TOTAL
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	
+	do Get-ACT-MATH
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-ACT-ENGL
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-ACT-COMP
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-WPST
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-GMAT-VERB
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-GMAT-VERB-PCT
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-GMAT-QUANT
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-GMAT-QUANT-PCT
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-GRE-WRIT
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-GRE-WRIT-PCT
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-GRE-Verb
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	do Get-GRE-Verb-PCT
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	Do Get-GRE-Quant
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	Do Get-GRE-Quant-PCT
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+
+	Do Get-ELM-Score
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	Do Get-EPT-Score
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	Do Get-IELTS
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+
+	Do Get-TOEFL-COMP
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	Do Get-TOEFL-ESSAY
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	Do Get-TOEFL-LSTN
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	Do Get-TOEFL-READ
+	If $TestScore <> ''
+	Do Write-IntlTestScores
+	End-if
+	
+	Add 1 to #IntlTestScoreCt
+
+FROM PS_ADM_APPL_PROG iTS
+join ps_srvc_ind_data svdt on svdt.emplid = iTS.emplid 
+        and  svdt.srvc_ind_cd = 'INT'
+      and svdt.srvc_ind_reason = 'SA' 
+      and svdt.srvc_ind_act_term = (select max(sa2t.srvc_ind_act_term)
+                            from ps_srvc_ind_data sa2t
+                            where sa2t.emplid = svdt.emplid
+                            and sa2t.srvc_ind_cd = svdt.srvc_ind_cd
+                            and sa2t.srvc_ind_reason = svdt.srvc_ind_reason)     
+
+WHERE iTS.ADMIT_TERM = $STRM
+AND iTS.EFFDT = (SELECT MAX(D_EDt.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_EDt
+                   WHERE iTS.EMPLID = D_EDt.EMPLID
+                     AND iTS.ACAD_CAREER = D_EDt.ACAD_CAREER
+                     AND iTS.STDNT_CAR_NBR = D_EDt.STDNT_CAR_NBR
+                     AND iTS.ADM_APPL_NBR = D_EDt.ADM_APPL_NBR
+                     AND iTS.APPL_PROG_NBR = D_EDt.APPL_PROG_NBR
+                     AND D_EDt.EFFDT <= SYSDATE)
+AND iTS.EFFSEQ = (SELECT MAX(D_ESt.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_ESt
+                    WHERE iTS.EMPLID = D_ESt.EMPLID
+                      AND iTS.ACAD_CAREER = D_ESt.ACAD_CAREER
+                      AND iTS.STDNT_CAR_NBR = D_ESt.STDNT_CAR_NBR
+                      AND iTS.ADM_APPL_NBR = D_ESt.ADM_APPL_NBR
+                      AND iTS.APPL_PROG_NBR = D_ESt.APPL_PROG_NBR
+                      AND iTS.EFFDT = D_ESt.EFFDT)
+union
+                    
+SELECT DISTINCT 
+iTSg.EMPLID
+
+FROM PS_ADM_APPL_PROG iTSg 
+join ps_stdnt_grps_hist vsgt on vsgt.emplid = iTSg.emplid 
+         and vsgt.stdnt_group IN ('INTF', 'INTJ')
+         AND vsgt.eff_status = 'A'
+         and vsgt.effdt = (select max(vsg2t.effdt) from ps_stdnt_grps_hist vsg2t
+                                                       where vsg2t.emplid = vsgt.emplid
+                                                      and vsg2t.stdnt_group = vsgt.stdnt_group
+                                                       and vsg2t.effdt <= sysdate)    
+WHERE iTSg.ADMIT_TERM = $STRM
+AND iTSg.EFFDT = (SELECT MAX(D_EDgt.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_EDgt
+                   WHERE iTSg.EMPLID = D_EDgt.EMPLID
+                     AND iTSg.ACAD_CAREER = D_EDgt.ACAD_CAREER
+                     AND iTSg.STDNT_CAR_NBR = D_EDgt.STDNT_CAR_NBR
+                     AND iTSg.ADM_APPL_NBR = D_EDgt.ADM_APPL_NBR
+                     AND iTSg.APPL_PROG_NBR = D_EDgt.APPL_PROG_NBR
+                     AND D_EDgt.EFFDT <= SYSDATE)
+AND iTSg.EFFSEQ = (SELECT MAX(D_ESgt.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_ESgt
+                    WHERE iTSg.EMPLID = D_ESgt.EMPLID
+                      AND iTSg.ACAD_CAREER = D_ESgt.ACAD_CAREER
+                      AND iTSg.STDNT_CAR_NBR = D_ESgt.STDNT_CAR_NBR
+                      AND iTSg.ADM_APPL_NBR = D_ESgt.ADM_APPL_NBR
+                      AND iTSg.APPL_PROG_NBR = D_ESgt.APPL_PROG_NBR
+                      AND iTSg.EFFDT = D_ESgt.EFFDT)
+End-Select
+			
+		     Display 'IntlTestScoreCt' noline
+		     Display #IntlTestScoreCt
+		     Display '--------------------'
+
+End-Procedure
+
+Begin-Procedure Write-IntlTestScores-Header 
+
+write 7 from
+
+'PSID'
+$Delimiter
+'Test_Type'
+$Delimiter
+'Test_Date'
+$Delimiter
+'Test_Component'
+$Delimiter
+'Test_Score'
+
+
+End-Procedure
+
+Begin-Procedure Write-IntlTestScores
+write 7 from
+
+$Emplid
+$Delimiter
+$TestType
+$Delimiter
+$TestDt
+$Delimiter
+$TestComp
+$Delimiter
+$TestScore
+
+
+End-Procedure
+
+!*********************************************************************************
+Begin-Procedure Write-International-Students-Header
+Write 5 from
+
+'PSID'
+$Delimiter
+'StanMail'
+$Delimiter
+'FERPA'
+$Delimiter
+'FirstName'
+$Delimiter
+'LastName'
+$Delimiter
+'MiddleName'
+$Delimiter
+'AddressLine1'
+$Delimiter
+'AddressLine2'
+$Delimiter
+'City'
+$Delimiter
+'State'
+$Delimiter
+'Zip'
+$Delimiter
+'DOB'
+$Delimiter
+'Ethnicity'
+$Delimiter
+'Mobile'
+$Delimiter
+'HomeEmail'
+$Delimiter
+'Gender'
+$Delimiter
+'AdmitTerm'
+$Delimiter
+'Residency'
+$Delimiter
+'Citizenship'
+$Delimiter
+'AppDate'
+$Delimiter
+'AppStatus'
+$Delimiter
+'AdmitDt'
+$Delimiter
+'AdmitType'
+$Delimiter
+'AcadProg'
+$Delimiter
+'AcadPlan'
+$Delimiter
+'SubPlan'
+$Delimiter
+'ActionReason'
+$Delimiter
+'Expected Grad Term'
+$Delimiter
+'Effective Date'
+$Delimiter
+'International Type'
+
+End-Procedure
+!************************************
+
+!******************************************************
+Begin-Procedure Write-International-Students
+Write 5 from 
+
+$Emplid
+$Delimiter
+$StanMail
+$Delimiter
+$FERPA
+$Delimiter
+$FirstName
+$Delimiter
+$LastName
+$Delimiter
+$Middle	
+$Delimiter
+$Address1
+$Delimiter
+$Address2
+$Delimiter
+$City
+$Delimiter
+$State
+$Delimiter
+$Zip
+$Delimiter
+$DOB
+$Delimiter
+$Ethnicity
+$Delimiter
+$Cell
+$Delimiter
+$HomeEmail
+$Delimiter
+$Gender
+$Delimiter
+$AdmitTerm
+$Delimiter
+$Residency
+$Delimiter
+$Citizenship
+$Delimiter
+$ApplDt
+$Delimiter
+$Status
+$Delimiter
+$AdmitDt
+$Delimiter
+$AdmitType
+$Delimiter
+$AcadProg
+$Delimiter
+$Plan
+$Delimiter
+$SubPlan
+$Delimiter
+$ActnRsn
+$Delimiter
+$ExpGradTrm
+$Delimiter
+$Effdt
+$Delimiter
+$IntlType
+
+End-Procedure
+
+!*******************************************************
+
+Begin-Procedure Write-International-Contacts-Header
+Write 6 from
+
+'PSID'
+$Delimiter
+'StanMail'
+$Delimiter
+'FERPA'
+$Delimiter
+'FirstName'
+$Delimiter
+'LastName'
+$Delimiter
+'MiddleName'
+$Delimiter
+'AddressLine1'
+$Delimiter
+'AddressLine2'
+$Delimiter
+'City'
+$Delimiter
+'State'
+$Delimiter
+'Zip'
+$Delimiter
+'DOB'
+$Delimiter
+'Ethnicity'
+$Delimiter
+'Mobile'
+$Delimiter
+'HomeEmail'
+$Delimiter
+'Gender'
+$Delimiter
+'AdmitTerm'
+$Delimiter
+'Residency'
+$Delimiter
+'Citizenship'
+$Delimiter
+'AppDate'
+$Delimiter
+'AppStatus'
+$Delimiter
+'AdmitDt'
+$Delimiter
+'AdmitType'
+$Delimiter
+'AcadProg'
+$Delimiter
+'AcadPlan'
+$Delimiter
+'SubPlan'
+$Delimiter
+'ActionReason'
+$Delimiter
+'Expected Grad Term'
+$Delimiter
+'Effective Date'
+$Delimiter
+'International Type'
+
+End-Procedure
+!************************************
+
+!******************************************************
+Begin-Procedure Write-International-Contacts
+Write 6 from 
+
+$Emplid
+$Delimiter
+$StanMail
+$Delimiter
+$FERPA
+$Delimiter
+$FirstName
+$Delimiter
+$LastName
+$Delimiter
+$Middle	
+$Delimiter
+$Address1
+$Delimiter
+$Address2
+$Delimiter
+$City
+$Delimiter
+$State
+$Delimiter
+$Zip
+$Delimiter
+$DOB
+$Delimiter
+$Ethnicity
+$Delimiter
+$Cell
+$Delimiter
+$HomeEmail
+$Delimiter
+$Gender
+$Delimiter
+$AdmitTerm
+$Delimiter
+$Residency
+$Delimiter
+$Citizenship
+$Delimiter
+$ApplDt
+$Delimiter
+$Status
+$Delimiter
+$AdmitDt
+$Delimiter
+$AdmitType
+$Delimiter
+$AcadProg
+$Delimiter
+$Plan
+$Delimiter
+$SubPlan
+$Delimiter
+$ActnRsn
+$Delimiter
+$ExpGradTrm
+$Delimiter
+$Effdt
+$Delimiter
+$IntlType
+
+End-Procedure
+
+!********************************************************************
+! International Transcripts (Schools)
+!*******************************************************************
+Begin-Procedure Get-Intl-Transcripts
+!5/20/2021 Added Received and Official/Unofficial Status
+!6/3/2021 Corrected TRANSCRIPT_FLAG discrepancies
+
+Move 0 to #IntlTranscriptCt
+Display 'Processing Intl Transcripts'
+
+Let $ExtOrgID = ''
+Let $Emplid = ''
+Let $SchoolName = ''
+Let $RcvdStatus = ''
+Let $OfficialTransFlag = ''
+
+Begin-Select distinct
+iTR.emplid,
+SCHtr.EXT_ORG_ID,
+EOTtr.DESCR,
+to_char(SCHtr.TRANSCRIPT_DT,'MM/DD/YYYY')  &iTranscriptDt,
+!06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+!TO_CHAR(SCHtr.SCC_ROW_ADD_DTTM,'MM/DD/YYYY')  &iTranscriptDt,
+SCHtr.TRANSCRIPT_FLAG,
+SCHtr.TRANSCRIPT_TYPE
+
+	Let $Emplid = &iTR.emplid
+	Let $ExtOrgID = &SCHtr.EXT_ORG_ID
+	Let $SchoolName = &EOTtr.DESCR
+	Let $TranscriptDt = &iTranscriptDt
+	Let $RcvdStatus = &SCHtr.TRANSCRIPT_FLAG
+	Let $OfficialTransFlag = &SCHtr.TRANSCRIPT_TYPE
+	
+	Do Get-Education
+	Do Check-RcvdStatus
+	
+	If $Emplid <> ''
+	Add 1 to #IntlTranscriptCt
+	Do Write-IntlSchools
+	End-if
+
+FROM PS_ADM_APPL_PROG iTR
+join ps_srvc_ind_data svdtr on svdtr.emplid = iTR.emplid 
+        and  svdtr.srvc_ind_cd = 'INT'
+      and svdtr.srvc_ind_reason = 'SA' 
+      and svdtr.srvc_ind_act_term = (select max(sa2tr.srvc_ind_act_term)
+                            from ps_srvc_ind_data sa2tr
+                            where sa2tr.emplid = svdtr.emplid
+                            and sa2tr.srvc_ind_cd = svdtr.srvc_ind_cd
+                            and sa2tr.srvc_ind_reason = svdtr.srvc_ind_reason)     
+JOIN PS_EXT_ACAD_DATA SCHtr ON schtr.emplid = iTR.EMPLID
+                      AND SCHtr.EXT_ORG_ID NOT IN ('STALAST60', 'STAOVERALL','C20000GPA')
+                      AND (SCHtr.EXT_ORG_ID LIKE 'C2%'
+                      or SCHtr.EXT_ORG_ID LIKE 'C3%')
+					  and SCHtr.TRANSCRIPT_DT = (SELECT MAX(S2r.TRANSCRIPT_DT)
+					  !06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+					  !and SCHtr.SCC_ROW_ADD_DTTM = (SELECT MAX(S2r.SCC_ROW_ADD_DTTM)
+		                             FROM PS_EXT_ACAD_DATA S2r
+		                             WHERE SCHtr.EMPLID = S2r.EMPLID
+                                             AND SCHtr.EXT_ORG_ID = S2r.EXT_ORG_ID)                 
+join PS_EXT_ORG_TBL EOTtr on EOTtr.EXT_ORG_ID = SCHtr.EXT_ORG_ID                   
+                    AND EOTtr.EFFDT = (SELECT MAX(EOT2r.EFFDT) FROM PS_EXT_ORG_TBL EOT2r
+                                    WHERE EOTtr.EXT_ORG_ID = EOT2r.EXT_ORG_ID)   
+WHERE iTR.ADMIT_TERM = $STRM
+AND iTR.EFFDT = (SELECT MAX(D_EDtr.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_EDtr
+                   WHERE iTR.EMPLID = D_EDtr.EMPLID
+                     AND iTR.ACAD_CAREER = D_EDtr.ACAD_CAREER
+                     AND iTR.STDNT_CAR_NBR = D_EDtr.STDNT_CAR_NBR
+                     AND iTR.ADM_APPL_NBR = D_EDtr.ADM_APPL_NBR
+                     AND iTR.APPL_PROG_NBR = D_EDtr.APPL_PROG_NBR
+                     AND D_EDtr.EFFDT <= SYSDATE)
+AND iTR.EFFSEQ = (SELECT MAX(D_EStr.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_EStr
+                    WHERE iTR.EMPLID = D_EStr.EMPLID
+                      AND iTR.ACAD_CAREER = D_EStr.ACAD_CAREER
+                      AND iTR.STDNT_CAR_NBR = D_EStr.STDNT_CAR_NBR
+                      AND iTR.ADM_APPL_NBR = D_EStr.ADM_APPL_NBR
+                      AND iTR.APPL_PROG_NBR = D_EStr.APPL_PROG_NBR
+                      AND iTR.EFFDT = D_EStr.EFFDT)
+union
+                    
+SELECT DISTINCT 
+iTRg.EMPLID,
+SCHrg.EXT_ORG_ID,
+EOTrg.DESCR,
+TO_CHAR(SCHRg.TRANSCRIPT_DT,'MM/DD/YYYY'),
+!06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+!TO_CHAR(SCHRg.SCC_ROW_ADD_DTTM,'MM/DD/YYYY'),
+SCHRg.TRANSCRIPT_FLAG,
+SCHRg.TRANSCRIPT_TYPE
+
+FROM PS_ADM_APPL_PROG iTRg
+join ps_stdnt_grps_hist vsgtr on vsgtr.emplid = iTRg.emplid 
+         and vsgtr.stdnt_group IN ('INTF', 'INTJ')
+         AND vsgtr.eff_status = 'A'
+         and vsgtr.effdt = (select max(vsg2tr.effdt) from ps_stdnt_grps_hist vsg2tr
+                                                       where vsg2tr.emplid = vsgtr.emplid
+                                                      and vsg2tr.stdnt_group = vsgtr.stdnt_group
+                                                      and vsg2tr.effdt <= sysdate)
+JOIN PS_EXT_ACAD_DATA SCHrg ON schrg.emplid = iTRg.EMPLID
+                      AND SCHrg.EXT_ORG_ID NOT IN ('STALAST60', 'STAOVERALL','C20000GPA')
+                      AND (SCHrg.EXT_ORG_ID LIKE 'C2%'
+                      or SCHrg.EXT_ORG_ID LIKE 'C3%')
+					  and SCHrg.TRANSCRIPT_DT = (SELECT MAX(S2r.TRANSCRIPT_DT)
+					  !06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+					  !and SCHrg.SCC_ROW_ADD_DTTM = (SELECT MAX(S2r.SCC_ROW_ADD_DTTM) 
+		                             FROM PS_EXT_ACAD_DATA S2r
+		                             WHERE SCHrg.EMPLID = S2r.EMPLID
+                                             AND SCHrg.EXT_ORG_ID = S2r.EXT_ORG_ID)                 
+join PS_EXT_ORG_TBL EOTrg on EOTrg.EXT_ORG_ID = SCHrg.EXT_ORG_ID                   
+                    AND EOTrg.EFFDT = (SELECT MAX(EOT2r.EFFDT) FROM PS_EXT_ORG_TBL EOT2r
+                                    WHERE EOTrg.EXT_ORG_ID = EOT2r.EXT_ORG_ID)                                                       
+                                                           
+WHERE iTRg.ADMIT_TERM = $STRM
+AND iTRg.EFFDT = (SELECT MAX(D_EDgtr.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_EDgtr
+                   WHERE iTRg.EMPLID = D_EDgtr.EMPLID
+                     AND iTRg.ACAD_CAREER = D_EDgtr.ACAD_CAREER
+                     AND iTRg.STDNT_CAR_NBR = D_EDgtr.STDNT_CAR_NBR
+                     AND iTRg.ADM_APPL_NBR = D_EDgtr.ADM_APPL_NBR
+                     AND iTRg.APPL_PROG_NBR = D_EDgtr.APPL_PROG_NBR
+                     AND D_EDgtr.EFFDT <= SYSDATE)
+AND iTRg.EFFSEQ = (SELECT MAX(D_ESgtr.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_ESgtr
+                    WHERE iTRg.EMPLID = D_ESgtr.EMPLID
+                      AND iTRg.ACAD_CAREER = D_ESgtr.ACAD_CAREER
+                      AND iTRg.STDNT_CAR_NBR = D_ESgtr.STDNT_CAR_NBR
+                      AND iTRg.ADM_APPL_NBR = D_ESgtr.ADM_APPL_NBR
+                      AND iTRg.APPL_PROG_NBR = D_ESgtr.APPL_PROG_NBR
+                      AND iTRg.EFFDT = D_ESgtr.EFFDT)
+                      
+union                      
+Select distinct
+iTRc.emplid,
+SCHCc.EXT_ORG_ID,
+EOTrc.DESCR,
+TO_CHAR(SCHCc.TRANSCRIPT_DT,'MM/DD/YYYY'),
+!06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+!TO_CHAR(SCHCc.SCC_ROW_ADD_DTTM,'MM/DD/YYYY'),
+SCHCc.TRANSCRIPT_FLAG,
+SCHCc.TRANSCRIPT_TYPE
+
+FROM PS_ADM_APPL_PROG iTRc
+join ps_srvc_ind_data svdtrc on svdtrc.emplid = iTRc.emplid 
+        and  svdtrc.srvc_ind_cd = 'INT'
+      and svdtrc.srvc_ind_reason = 'SA' 
+      and svdtrc.srvc_ind_act_term = (select max(sa2trc.srvc_ind_act_term)
+                            from ps_srvc_ind_data sa2trc
+                            where sa2trc.emplid = svdtrc.emplid
+                            and sa2trc.srvc_ind_cd = svdtrc.srvc_ind_cd
+                            and sa2trc.srvc_ind_reason = svdtrc.srvc_ind_reason)     
+JOIN PS_EXT_ACAD_DATA SCHCc ON schCc.emplid = iTRc.EMPLID
+                      and schCc.ext_org_id = 'C30000128'                
+join PS_EXT_ORG_TBL EOTrc on EOTrc.EXT_ORG_ID = SCHCc.EXT_ORG_ID                   
+                    AND EOTrc.EFFDT = (SELECT MAX(EOT2rc.EFFDT) FROM PS_EXT_ORG_TBL EOT2rc
+                                    WHERE EOTrc.EXT_ORG_ID = EOT2rc.EXT_ORG_ID)   
+WHERE iTRc.ADMIT_TERM = $STRM
+AND iTRc.EFFDT = (SELECT MAX(D_EDtrc.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_EDtrc
+                   WHERE iTRc.EMPLID = D_EDtrc.EMPLID
+                     AND iTRc.ACAD_CAREER = D_EDtrc.ACAD_CAREER
+                     AND iTRc.STDNT_CAR_NBR = D_EDtrc.STDNT_CAR_NBR
+                     AND iTRc.ADM_APPL_NBR = D_EDtrc.ADM_APPL_NBR
+                     AND iTRc.APPL_PROG_NBR = D_EDtrc.APPL_PROG_NBR
+                     AND D_EDtrc.EFFDT <= SYSDATE)
+AND iTRc.EFFSEQ = (SELECT MAX(D_EStrc.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_EStrc
+                    WHERE iTRc.EMPLID = D_EStrc.EMPLID
+                      AND iTRc.ACAD_CAREER = D_EStrc.ACAD_CAREER
+                      AND iTRc.STDNT_CAR_NBR = D_EStrc.STDNT_CAR_NBR
+                      AND iTRc.ADM_APPL_NBR = D_EStrc.ADM_APPL_NBR
+                      AND iTRc.APPL_PROG_NBR = D_EStrc.APPL_PROG_NBR
+                      AND iTRc.EFFDT = D_EStrc.EFFDT)  
+                      
+union 
+Select distinct
+iTRcg.emplid,
+SCHCcg.EXT_ORG_ID,
+EOTrcg.DESCR,
+TO_CHAR(SCHCcg.TRANSCRIPT_DT,'MM/DD/YYYY'),
+!06/03/2021 Pulling TRANSCRIPT_DT instead of SCC_ROW_ADD_DTTM
+!TO_CHAR(SCHCcg.SCC_ROW_ADD_DTTM,'MM/DD/YYYY'),
+SCHCcg.TRANSCRIPT_FLAG,
+SCHCcg.TRANSCRIPT_TYPE
+
+FROM PS_ADM_APPL_PROG iTRcg
+join ps_stdnt_grps_hist vsgtrcg on vsgtrcg.emplid = iTRcg.emplid 
+         and vsgtrcg.stdnt_group IN ('INTF', 'INTJ')
+         AND vsgtrcg.eff_status = 'A'
+         and vsgtrcg.effdt = (select max(vsg2trcg.effdt) from ps_stdnt_grps_hist vsg2trcg
+                                                       where vsg2trcg.emplid = vsgtrcg.emplid
+                                                      and vsg2trcg.stdnt_group = vsgtrcg.stdnt_group
+                                                      and vsg2trcg.effdt <= sysdate)
+JOIN PS_EXT_ACAD_DATA SCHCcg ON schCcg.emplid = iTRcg.EMPLID
+                      and schCcg.ext_org_id = 'C30000128'                
+join PS_EXT_ORG_TBL EOTrcg on EOTrcg.EXT_ORG_ID = SCHCcg.EXT_ORG_ID                   
+                    AND EOTrcg.EFFDT = (SELECT MAX(EOT2rcg.EFFDT) FROM PS_EXT_ORG_TBL EOT2rcg
+                                    WHERE EOTrcg.EXT_ORG_ID = EOT2rcg.EXT_ORG_ID)   
+WHERE iTRcg.ADMIT_TERM = $STRM
+AND iTRcg.EFFDT = (SELECT MAX(D_EDtrcg.EFFDT)
+                    FROM sysadm.PS_ADM_APPL_PROG D_EDtrcg
+                   WHERE iTRcg.EMPLID = D_EDtrcg.EMPLID
+                     AND iTRcg.ACAD_CAREER = D_EDtrcg.ACAD_CAREER
+                     AND iTRcg.STDNT_CAR_NBR = D_EDtrcg.STDNT_CAR_NBR
+                     AND iTRcg.ADM_APPL_NBR = D_EDtrcg.ADM_APPL_NBR
+                     AND iTRcg.APPL_PROG_NBR = D_EDtrcg.APPL_PROG_NBR
+                     AND D_EDtrcg.EFFDT <= SYSDATE)
+AND iTRcg.EFFSEQ = (SELECT MAX(D_EStrcg.EFFSEQ)
+                     FROM sysadm.PS_ADM_APPL_PROG D_EStrcg
+                    WHERE iTRcg.EMPLID = D_EStrcg.EMPLID
+                      AND iTRcg.ACAD_CAREER = D_EStrcg.ACAD_CAREER
+                      AND iTRcg.STDNT_CAR_NBR = D_EStrcg.STDNT_CAR_NBR
+                      AND iTRcg.ADM_APPL_NBR = D_EStrcg.ADM_APPL_NBR
+                      AND iTRcg.APPL_PROG_NBR = D_EStrcg.APPL_PROG_NBR
+                      AND iTRcg.EFFDT = D_EStrcg.EFFDT)                     
+                  
+End-Select
+		Display 'IntlTranscriptCt' noline
+		Display #IntlTranscriptCt
+		Display '---------------------------'
+
+End-Procedure
+
+Begin-Procedure Write-IntlSchools-Header 
+
+write 8 from
+
+'PSID'
+$Delimiter
+'Ext_Org_ID'
+$Delimiter
+'School Name'
+$Delimiter
+'School_Type'
+$Delimiter
+'CEEB'
+$Delimiter
+'COSAR'
+$Delimiter
+!'School_County'
+!$Delimiter
+'School_State'
+$Delimiter
+'Transcript Dt'
+$Delimiter
+'Received Status'
+$Delimiter
+'Unofficial/Official'
+
+End-Procedure
+
+!--------------------------------------------------------
+Begin-Procedure Write-IntlSchools
+write 8 from
+
+$Emplid
+$Delimiter
+$ExtOrgID
+$Delimiter
+$School_Name
+$Delimiter
+$SchoolType
+$Delimiter
+$CEEB
+$Delimiter
+$COSAR
+$Delimiter
+!$SCH_COUNTY	
+!$Delimiter
+$SCH_STATE
+$Delimiter
+$TranscriptDt
+$Delimiter
+$CheckedRcvdStatus
+$Delimiter
+$OfficialTransFlag		  
+
+End-Procedure
+!********************************************************************
+Begin-Procedure Get-Term-Descr
+
+BEGIN-SELECT
+TVT.DESCR 		&Descr_MC
+substr(TVT.descr,1,4)   &termyear
+substr(tvt.strm,4,1) 	&termdigit
+
+   
+   Evaluate &termdigit
+      
+      When = '1'
+      Let $TermDescr = 'Winter'
+      Let $TermYear  = &termyear
+      Break
+      When = '2'
+      Let $TermDescr = 'Spring'
+      Let $TermYear  = &termyear
+      Break
+      When = '3'
+      Let $TermDescr = 'Summer'
+      Let $TermYear  = &termyear
+      Break
+      When = '4'
+      Let $TermDescr = 'Fall'
+      Let $TermYear  = &termyear
+ 
+   End-evaluate
+   
+ 
+FROM SYSADM.PS_TERM_VAL_TBL TVT
+WHERE TVT.STRM = $AdmitTerm 
+END-SELECT
+
+BEGIN-SELECT
+TVT2.DESCR 		&Descr_MC2
+substr(TVT2.descr,1,4)   &termyear2
+substr(tvt2.strm,4,1) 	&termdigit2
+
+   
+   Evaluate &termdigit2
+      
+      When = '1'
+      Let $TermDescr2 = 'Winter'
+      Let $TermYear2  = &termyear2
+      Break
+      When = '2'
+      Let $TermDescr2 = 'Spring'
+      Let $TermYear2  = &termyear2
+      Break
+      When = '3'
+      Let $TermDescr2 = 'Summer'
+      Let $TermYear2  = &termyear2
+      Break
+      When = '4'
+      Let $TermDescr2 = 'Fall'
+      Let $TermYear2  = &termyear2
+ 
+   End-evaluate
+ 
+FROM SYSADM.PS_TERM_VAL_TBL TVT2
+WHERE TVT2.STRM = $ExpGrad
+END-SELECT
+End-Procedure
+
+!********************************************************************************
+Begin-Procedure Get-Time-Date
+!********************************************************************************
+BEGIN-SELECT
+TO_CHAR(SYSDATE, 'HH24:MI:SS MM/DD/YYYY') &TIME_DATE
+
+  Let $v_TIME_DATE = &TIME_DATE
+
+FROM DUAL
+END-SELECT
+End-Procedure
+
+!***********************************************************************
+!  SQC Files for called procedures.                                    *
+!***********************************************************************
+#include 'askftd.sqc'    !From Thru Date input
+#Include 'readxlat.sqc'  !Read-Translate-Table procedure
+#Include 'reset.sqc'     !Reset printer procedure
+#Include 'curdttim.sqc'  !Get-Current-DateTime procedure
+#Include 'datetime.sqc'  !Routines for date and time formatting
+#Include 'number.sqc'    !Routines to format numbers
+#Include 'stdapi.sqc'    !Routines to Update Run Status
+#Include 'sqrtrans.sqc'
+#Include 'useprntr.sqc'
